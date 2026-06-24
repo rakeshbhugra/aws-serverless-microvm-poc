@@ -81,6 +81,15 @@ def need(key: str):
 
 # ---- clients (lazy so `check` can report nicely) ---------------------------
 def mv():
+    """Return a boto3 client for the Lambda MicroVMs API.
+
+    "lambda-microvms" is the service's canonical boto3 identifier (the same
+    token used by `aws lambda-microvms ...`); it must appear in
+    boto3.Session().get_available_services(), which requires botocore >= 1.43.36.
+    Built lazily (inside a function, not at import) so `check` can catch a
+    missing-creds / unknown-service failure and print a friendly message instead
+    of crashing on import.
+    """
     return boto3.client("lambda-microvms", region_name=REGION)
 
 
