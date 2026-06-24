@@ -1,0 +1,32 @@
+# The stack that runs INSIDE the MicroVM. Redis holds the counter; the backend
+# reads/increments it.
+#
+# Two hard-won constraints for nested containers in a Lambda MicroVM (see README):
+#   1. DNS only works via the VM's local stub at 127.0.0.2 (public resolvers like
+#      8.8.8.8 are blocked). dockerd's /etc/docker/daemon.json points containers
+#      there; reaching a loopback stub requires...
+#   2. ...host networking. So both services use network_mode: host, and the
+#      backend talks to Redis over localhost (not a compose bridge).
+#
+# We also install deps at container start instead of `docker build`, because
+# buildkit ignores the 127.0.0.2 resolver for build RUN steps (pip can't resolve).
+# Running a stock image + `pip install` at start uses plain `docker run`
+# semantics, which DO get the working resolver.
+services:
+  redis:
+    image: redis:7-alpine
+    network_mode: host # redis on localhost:6379
+    restart: unless-stopped
+
+  backend:
+    image: python:3.12-slim
+    network_mode: host # backend on localhost:8080; reaches redis on localhost
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    environment:
+      REDIS_HOST: 127.0.0.1
+    command: sh -c 'pip install --no-cache-dir -r requirements.txt && uvicorn app:app --host 0.0.0.0 --port 8080'
+    depends_on:
+      - redis
+    restart: unless-stopped
