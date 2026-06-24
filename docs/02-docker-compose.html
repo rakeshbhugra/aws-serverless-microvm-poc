@@ -1,0 +1,259 @@
+<meta charset="utf-8">
+<title>docker compose up inside a MicroVM — Findings</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  --bg:#000;--surface:#0a0a0a;--surface-2:#111;--border:#262626;--border-bright:#3a3a3a;
+  --text:#ededed;--text-dim:#8a8a8a;--text-faint:#5c5c5c;--accent:#fff;
+  --mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:920px;margin:0 auto;padding:72px 28px 120px}
+h1{font-size:40px;line-height:1.12;font-weight:600;letter-spacing:-.02em;margin:0 0 22px;
+  background:linear-gradient(180deg,#fff,#9a9a9a);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--text-faint);margin-bottom:18px}
+h2{font-size:13px;font-family:var(--mono);letter-spacing:.22em;text-transform:uppercase;color:var(--text-faint);
+  margin:64px 0 28px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+h2 .num{color:var(--accent)}
+h3{font-size:20px;font-weight:600;letter-spacing:-.01em;margin:30px 0 10px}
+p{color:#cfcfcf;font-size:16px}
+.lede{font-size:18px;color:var(--text-dim);border-left:2px solid var(--border-bright);padding-left:18px;margin:24px 0 8px}
+code{font-family:var(--mono);font-size:.86em;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:1px 6px;color:#e0e0e0}
+a{color:var(--text);border-bottom:1px solid var(--border-bright);text-decoration:none}
+.meta{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 0}
+.chip{font-family:var(--mono);font-size:12px;color:var(--text-dim);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 10px}
+.callout{border:1px solid var(--border-bright);border-left:3px solid #6a6a6a;border-radius:10px;padding:18px 22px;background:var(--surface);margin:22px 0}
+.callout .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-faint);margin-bottom:8px}
+.callout p{margin:0;font-size:15px}
+.badge{font-family:var(--mono);font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;border:1px solid var(--border-bright);display:inline-block}
+.b-ok{color:#fff;background:#1c1c1c;border-color:#555}
+.b-warn{color:#c9c9c9;background:#141414;border-color:#3a3a3a;border-style:dashed}
+.b-bad{color:#8a8a8a;background:#0d0d0d;border-color:#2a2a2a}
+table{width:100%;border-collapse:collapse;margin:22px 0;font-size:14px}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-faint);text-align:left;padding:10px 12px;border-bottom:1px solid var(--border-bright)}
+td{padding:11px 12px;border-bottom:1px solid var(--border);color:#cfcfcf;vertical-align:top}
+td code{white-space:nowrap}
+ul.clean{list-style:none;padding:0;margin:20px 0}
+ul.clean li{border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:10px;background:var(--surface);font-size:15px;color:#cfcfcf}
+ul.clean li b{color:var(--text)}
+pre{background:#070707;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#d8d8d8;margin:18px 0}
+.term{background:#070707;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.6;margin:18px 0}
+.term .ok{color:#fff}.term .bad{color:#8a8a8a}.term .dim{color:#5c5c5c}
+footer{font-family:var(--mono);font-size:12px;color:var(--text-faint);text-align:center;margin-top:80px;border-top:1px solid var(--border);padding-top:28px}
+
+.walk{background:radial-gradient(800px 320px at 50% -10%,#141414,transparent 70%),var(--surface);
+  border:1px solid var(--border);border-radius:16px;padding:32px 28px;margin:24px 0}
+.walk-track{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
+.wnode{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:108px;cursor:pointer;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:16px 12px;
+  color:var(--text-dim);font-family:var(--sans);transition:all .2s;opacity:.55}
+.wnode:hover{opacity:.85;border-color:var(--border-bright)}
+.wnode.active{opacity:1;border-color:#6a6a6a;color:var(--text);
+  background:linear-gradient(180deg,#1a1a1a,#0e0e0e);box-shadow:0 12px 44px -22px rgba(255,255,255,.3)}
+.wnode.done{opacity:.8;border-color:var(--border-bright)}
+.wn-num{font-family:var(--mono);font-size:12px;font-weight:600;width:24px;height:24px;border-radius:7px;
+  display:inline-flex;align-items:center;justify-content:center;background:#222;color:var(--text-dim)}
+.wnode.active .wn-num{background:var(--accent);color:#000}
+.wn-title{font-size:13px;font-weight:600;text-align:center}
+.wn-arrow{color:var(--text-faint);font-family:var(--mono)}
+.walk-detail{margin-top:24px;border:1px solid var(--border);border-radius:12px;padding:20px 22px;background:#000;min-height:120px}
+.wd-stage{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-faint);margin-bottom:10px}
+.wd-body{margin:0;color:#cfcfcf;font-size:15px}
+.wd-body code{font-size:.82em}
+.walk-nav{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:22px}
+.wbtn{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--surface-2);
+  border:1px solid var(--border-bright);border-radius:9px;padding:9px 18px;cursor:pointer;transition:all .15s}
+.wbtn:hover:not(:disabled){background:#1c1c1c;border-color:#5a5a5a}
+.wbtn:disabled{opacity:.3;cursor:not-allowed}
+.wcount{font-family:var(--mono);font-size:13px;color:var(--text-dim)}
+.wcount b{color:var(--text)}
+@media(max-width:680px){h1{font-size:30px}.wn-arrow{display:none}.wnode{min-width:0;flex:1 1 70px}}
+</style>
+
+<div class="wrap">
+
+  <div class="eyebrow">POC 02 · Findings</div>
+  <h1><code style="font-size:.7em;background:none;border:none;padding:0">docker compose up</code> inside a MicroVM</h1>
+  <div class="meta">
+    <span class="chip">2026-06-24</span>
+    <span class="chip">Rakesh Bhugra</span>
+    <span class="chip badge b-ok">proven</span>
+    <span class="chip">#docker</span>
+    <span class="chip">#dns</span>
+    <span class="chip">#firecracker</span>
+  </div>
+  <p class="lede">It works — a Redis + FastAPI stack runs via <code>docker compose up</code> inside a Lambda MicroVM and
+  serves through the endpoint. But getting there took a real debugging session: an opaque 502, a terminated VM, and a
+  nested-container DNS wall. This is the record of what broke, how we saw inside without SSH, and the exact changes that
+  made it green — so the next track (and <code>MicroVMRunner</code>) inherit the scar tissue.</p>
+
+  <!-- 01 -->
+  <h2><span class="num">01</span> &nbsp;The verdict</h2>
+  <table>
+    <tr><th>Question</th><th>Answer</th></tr>
+    <tr><td>Can a full Docker daemon run inside a MicroVM?</td><td><span class="badge b-ok">yes</span> with <code>additionalOsCapabilities=["ALL"]</code></td></tr>
+    <tr><td>Can <code>docker compose up</code> bring up a multi-service stack?</td><td><span class="badge b-ok">yes</span> — redis + backend, serving externally</td></tr>
+    <tr><td>Does it survive being baked into the image + relaunched?</td><td><span class="badge b-ok">yes</span> — a fresh VM served with no manual steps</td></tr>
+    <tr><td>Does nested-container <em>networking</em> just work?</td><td><span class="badge b-bad">no</span> — DNS + host-networking constraints (the whole story below)</td></tr>
+    <tr><td>Does <code>docker build</code> work in-VM?</td><td><span class="badge b-bad">no</span> — buildkit can't resolve DNS; install at container start instead</td></tr>
+  </table>
+  <div class="term">
+$ uv run python microvm.py curl<br>
+<span class="ok">{"status":"ok","count":1,"served_by":"localhost"}</span>  <span class="dim"># then 2, 3 … counter lives in Redis</span>
+  </div>
+
+  <!-- 02 -->
+  <h2><span class="num">02</span> &nbsp;The debugging journey</h2>
+  <p>How we got from a blank 502 to a green stack. Click a node, use the buttons, or arrow keys.</p>
+
+  <div class="walk" data-walk>
+    <div class="walk-track">
+      <button class="wnode" data-i="0"><span class="wn-num">1</span><span class="wn-title">502</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="1"><span class="wn-num">2</span><span class="wn-title">Exit 17</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="2"><span class="wn-num">3</span><span class="wn-title">CloudWatch</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="3"><span class="wn-num">4</span><span class="wn-title">Shell in</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="4"><span class="wn-num">5</span><span class="wn-title">Diagnose DNS</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="5"><span class="wn-num">6</span><span class="wn-title">Wrong fixes</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="6"><span class="wn-num">7</span><span class="wn-title">Green</span></button>
+    </div>
+    <div class="walk-detail">
+      <div class="wd-stage" data-detail="0">Step 1 · Opaque 502</div>
+      <p class="wd-body" data-detail="0"><code>curl</code> the endpoint → <code>HTTP 502 Bad Gateway</code>, empty body. Per AWS's table, 502 means "application not responding." Nothing was listening on <code>:8080</code> — but the error told us nothing about why. First lesson: make <code>curl</code> print the real status, not a stack trace.</p>
+      <div class="wd-stage" data-detail="1" hidden>Step 2 · The VM had terminated (exit 17)</div>
+      <p class="wd-body" data-detail="1" hidden><code>get-microvm</code> → <code>state: TERMINATED</code>, reason <code>"Container Stopped with Exit Code: 17"</code>. The entrypoint had <code>set -e</code>, so when <code>compose up</code> failed the script died, the VM's main process exited, and the whole VM was torn down — taking the evidence with it. Fix: drop <code>set -e</code> so a failed stack stays alive and inspectable.</p>
+      <div class="wd-stage" data-detail="2" hidden>Step 3 · CloudWatch had the real error</div>
+      <p class="wd-body" data-detail="2" hidden>The VM streams stdout to <code>/aws/lambda-microvms/&lt;image&gt;</code>. Reading it: dockerd started fine, images <em>pulled</em> fine, then the backend build hit <code>pip install</code> → <code>Temporary failure in name resolution</code>. So: DNS failing <em>inside a nested container</em>, even though dockerd's own pulls resolved.</p>
+      <div class="wd-stage" data-detail="3" hidden>Step 4 · A shell, without SSH</div>
+      <p class="wd-body" data-detail="3" hidden>To poke live we baked a tiny <code>debug-exec</code> server on <code>:9000</code> — POST a command, it runs <code>bash -lc</code> on the VM host and returns stdout. Reached over the same authenticated ingress (the JWE token gates it). Now <code>microvm.py shell "docker ps"</code> runs anything inside the VM. (There's no documented native interactive shell; this also seeds the track-5 control agent.)</p>
+      <div class="wd-stage" data-detail="4" hidden>Step 5 · Diagnose the DNS precisely</div>
+      <p class="wd-body" data-detail="4" hidden>From the shell: host <code>/etc/resolv.conf</code> = <code>nameserver 127.0.0.2</code> (a VM-provided stub) and the host resolves fine. Containers pointed at <code>8.8.8.8</code> fail; <em>forcing</em> a container onto <code>127.0.0.2</code> resolves instantly. Egress itself is fine — raw TCP to <code>1.1.1.1:443</code> connects. So the rule: <b>only the <code>127.0.0.2</code> stub answers DNS; public resolvers are blocked.</b></p>
+      <div class="wd-stage" data-detail="5" hidden>Step 6 · The wrong turns</div>
+      <p class="wd-body" data-detail="5" hidden>"Fix A" set <code>daemon.json</code> dns to <code>8.8.8.8</code> — which <em>backfired</em>, forcing every container off the one resolver that works. Then <code>docker build --network=host</code> alone still failed: the build container had host-netns reachability but its <code>resolv.conf</code> still said <code>8.8.8.8</code>. And even with <code>daemon.json → 127.0.0.2</code>, <b>buildkit</b> ignores it for build RUN steps. Three dead ends, each a real lesson.</p>
+      <div class="wd-stage" data-detail="6" hidden>Step 7 · Green</div>
+      <p class="wd-body" data-detail="6" hidden>The combination that works: <code>daemon.json</code> → <code>127.0.0.2</code>, <b>host networking</b> on every service (so the loopback stub is reachable), Redis over <code>localhost</code>, and <b>install deps at container start</b> (plain <code>docker run</code> gets the resolver; skip <code>docker build</code> entirely). <code>count</code> climbs 1 → 2 → 3, and a fresh VM from the rebuilt image serves with zero manual steps.</p>
+    </div>
+    <div class="walk-nav">
+      <button class="wbtn wprev">← Back</button>
+      <span class="wcount"><b>1</b> / 7</span>
+      <button class="wbtn wnext">Next →</button>
+    </div>
+  </div>
+
+  <!-- 03 -->
+  <h2><span class="num">03</span> &nbsp;What we had to do — the checklist</h2>
+  <p>Every concrete change required to get from "single Dockerfile app" (POC 01) to "compose stack" (POC 02):</p>
+  <table>
+    <tr><th>#</th><th>Change</th><th>Why</th></tr>
+    <tr><td>1</td><td><code>additionalOsCapabilities=["ALL"]</code> at image build</td><td>dockerd needs namespace / mount / network privileges (granted inside the VM boundary)</td></tr>
+    <tr><td>2</td><td>Memory baseline → <b>4 GB</b> (<code>resources.minimumMemoryInMiB</code>)</td><td>dockerd + dependency installs need headroom</td></tr>
+    <tr><td>3</td><td>Install Docker + the <b>compose v2 plugin</b> manually</td><td>AL2023's <code>docker</code> package doesn't bundle <code>docker compose</code></td></tr>
+    <tr><td>4</td><td><code>/etc/docker/daemon.json</code> → <code>{"dns":["127.0.0.2"]}</code></td><td>the only resolver that works; public DNS is blocked</td></tr>
+    <tr><td>5</td><td><code>network_mode: host</code> on every service</td><td><code>127.0.0.2</code> is host loopback — a bridge container can't reach it</td></tr>
+    <tr><td>6</td><td><code>REDIS_HOST=127.0.0.1</code> (talk over localhost)</td><td>host networking means no compose bridge / DNS service names</td></tr>
+    <tr><td>7</td><td>Install deps at <b>container start</b>, not <code>docker build</code></td><td>buildkit can't use the <code>127.0.0.2</code> resolver; <code>docker run</code> can</td></tr>
+    <tr><td>8</td><td>Drop <code>set -e</code> in the entrypoint</td><td>keep the VM alive on failure so it stays inspectable (no opaque 502)</td></tr>
+    <tr><td>9</td><td>Bake a <code>debug-exec</code> server + add <code>logs</code>/<code>shell</code></td><td>see inside the VM without SSH — how all of the above was found</td></tr>
+  </table>
+
+  <!-- 04 -->
+  <h2><span class="num">04</span> &nbsp;The DNS rule, stated plainly</h2>
+  <div class="callout">
+    <div class="tag">The one sentence to remember</div>
+    <p>Inside a Lambda MicroVM, containers resolve DNS <b>only through the VM's local stub at <code>127.0.0.2</code></b>; public
+    resolvers like <code>8.8.8.8</code> are blocked. And <code>127.0.0.2</code> is host loopback, so containers must use
+    <b>host networking</b> to reach it.</p>
+  </div>
+  <ul class="clean">
+    <li><b>Egress is not the problem.</b> Raw TCP from a container to <code>1.1.1.1:443</code> connects fine. Only outbound DNS to public resolvers is blocked — a narrow, easy-to-misread restriction.</li>
+    <li><b>Image pulls fooled us.</b> dockerd pulls images as a <em>host</em> process, so it uses <code>127.0.0.2</code> and works. That made it look like networking was fine — until a <em>container</em> tried to resolve.</li>
+    <li><b>buildkit is the stubborn one.</b> Even <code>daemon.json → 127.0.0.2</code> plus <code>--network=host</code> didn't get build RUN steps onto the stub. Run-time containers (plain <code>docker run</code>) do get it. So: no in-VM <code>docker build</code> — pre-pull/pre-build out of band, or install at start.</li>
+  </ul>
+
+  <!-- 05 -->
+  <h2><span class="num">05</span> &nbsp;How we saw inside — no SSH</h2>
+  <p>There is no documented native interactive shell for MicroVMs (the console's likely needs an agent). Two homemade tools carried the whole debug:</p>
+  <ul class="clean">
+    <li><b><code>logs</code></b> — tails the VM's CloudWatch stream (<code>/aws/lambda-microvms/&lt;image&gt;</code>). This is what surfaced the <code>pip</code> DNS error. Works even after the VM has terminated.</li>
+    <li><b><code>shell</code></b> — a ~20-line <code>debug-exec</code> HTTP server baked on <code>:9000</code>; <code>shell "cmd"</code> POSTs a command, it runs on the VM host (where Docker lives), returns stdout. Auth is the MicroVM JWE token + the VM boundary. This let us run <code>docker run</code>, edit <code>compose.yml</code>, restart dockerd, and re-test <em>live</em> — no rebuild cycles.</li>
+  </ul>
+  <div class="callout">
+    <div class="tag">Method note</div>
+    <p>The fast loop was: <b>keep the VM alive on failure</b> (drop <code>set -e</code>) → <b>shell in</b> → reproduce + fix
+    interactively → only <em>then</em> bake the proven config into the image. Far cheaper than the build-snapshot-run cycle,
+    which is several minutes each pass.</p>
+  </div>
+
+  <!-- 06 -->
+  <h2><span class="num">06</span> &nbsp;What this means for the real stack</h2>
+  <ul class="clean">
+    <li><b>Nested compose works, but host-networking scales badly.</b> With many services (Postgres + Redis + API + Vite + Playwright) all on host networking, you hit port conflicts and lose network isolation. For the full ryureflect image this nudges toward <b>flattened processes on a rich Ubuntu userland</b> over deep nested compose.</li>
+    <li><b>Base image:</b> the MicroVM OS base is AL2023-only, but the <em>container base</em> (your <code>FROM</code>) can be <code>ubuntu</code>. Heavy tools (Playwright, browsers) live in the userland you choose.</li>
+    <li><b>Warm resume is unfinished.</b> No <code>/ready</code> hook means the snapshot is taken mid-init, so the first request on a fresh VM still waits on install + reconnect. Gating with <code>/ready</code> is the next track.</li>
+    <li><b>For snapshot-warm builds, don't build in-VM.</b> Pre-pull/pre-build images (e.g. ECR) given buildkit's DNS limitation.</li>
+  </ul>
+
+  <!-- 07 -->
+  <h2><span class="num">07</span> &nbsp;The working compose</h2>
+  <pre>services:
+  redis:
+    image: redis:7-alpine
+    network_mode: host            # redis on localhost:6379
+    restart: unless-stopped
+
+  backend:
+    image: python:3.12-slim       # stock image — no in-VM docker build
+    network_mode: host            # reach the 127.0.0.2 stub + redis on localhost
+    working_dir: /app
+    volumes: [ "./backend:/app" ]
+    environment: { REDIS_HOST: 127.0.0.1 }
+    command: sh -c 'pip install --no-cache-dir -r requirements.txt
+                    && uvicorn app:app --host 0.0.0.0 --port 8080'
+    depends_on: [ redis ]
+    restart: unless-stopped
+
+# plus, baked into the MicroVM image:
+#   /etc/docker/daemon.json  ->  {"dns":["127.0.0.2"]}
+#   build with additionalOsCapabilities=["ALL"], 4 GB baseline</pre>
+
+  <footer>docs/02-docker-compose.html · OLED-black findings · AWS Lambda MicroVMs × ryureflect · 2026-06-24</footer>
+
+</div>
+
+<script>
+document.querySelectorAll('[data-walk]').forEach(function(walk){
+  var nodes   = walk.querySelectorAll('.wnode');
+  var details = walk.querySelectorAll('[data-detail]');
+  var prev    = walk.querySelector('.wprev');
+  var next    = walk.querySelector('.wnext');
+  var count   = walk.querySelector('.wcount b');
+  var total   = nodes.length;
+  var i = 0;
+  function render(){
+    nodes.forEach(function(n,idx){
+      n.classList.toggle('active', idx===i);
+      n.classList.toggle('done', idx<i);
+    });
+    details.forEach(function(d){ d.hidden = (+d.dataset.detail !== i); });
+    if(count) count.textContent = i+1;
+    prev.disabled = i===0;
+    next.disabled = i===total-1;
+  }
+  next.addEventListener('click', function(){ if(i<total-1){i++;render();} });
+  prev.addEventListener('click', function(){ if(i>0){i--;render();} });
+  nodes.forEach(function(n){ n.addEventListener('click', function(){ i=+n.dataset.i; render(); }); });
+  walk.tabIndex = 0;
+  walk.addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ if(i<total-1){i++;render();} }
+    if(e.key==='ArrowLeft'){ if(i>0){i--;render();} }
+  });
+  render();
+});
+</script>
