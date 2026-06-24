@@ -101,6 +101,20 @@ def bucket_name() -> str:
     return os.environ.get("BUCKET", f"ryu-microvm-poc-{account_id()}")
 
 
+def image_arn() -> str:
+    """Full ARN of our MicroVM image.
+
+    get/run/delete take `imageIdentifier`, which must be the ARN, not the bare
+    name (the bare `name` is only valid for create). Prefer the ARN saved by
+    `build`/`wait-image`; otherwise construct it deterministically so it also
+    works for an image built in an earlier run before we started saving it.
+    """
+    return (
+        state_load().get("image_arn")
+        or f"arn:aws:lambda:{REGION}:{account_id()}:microvm-image:{IMAGE_NAME}"
+    )
+
+
 # ---- steps ------------------------------------------------------------------
 def cmd_check(_):
     try:
@@ -227,13 +241,23 @@ def cmd_build(_):
         baseImageArn=BASE_IMAGE_ARN,
         buildRoleArn=s["role_arn"],
     )
-    print(f"==> build started: {resp.get('imageArn', IMAGE_NAME)}")
+    arn = resp.get("imageArn")
+    if arn:
+        state_save(image_arn=arn)
+    print(f"==> build started: {arn or IMAGE_NAME}")
     print("    poll with: python microvm.py wait-image")
 
 
 def cmd_wait_image(_):
+    """Poll get-microvm-image until the build finishes.
+
+    `build` returns immediately with the image in CREATING; the Dockerfile run +
+    snapshot take minutes. This loops every 10s until state is CREATED/UPDATED
+    (then saves the ARN and returns) or *FAILED* (then points at CloudWatch).
+    Pure waiting — no side effects beyond saving the resolved ARN to state.
+    """
     while True:
-        img = mv().get_microvm_image(imageIdentifier=IMAGE_NAME)
+        img = mv().get_microvm_image(imageIdentifier=image_arn())
         st = img.get("state")
         print(f"    image state: {st}")
         if st in ("CREATED", "UPDATED"):
@@ -246,9 +270,8 @@ def cmd_wait_image(_):
 
 
 def cmd_run(_):
-    s = state_load()
     resp = mv().run_microvm(
-        imageIdentifier=s.get("image_arn", IMAGE_NAME),
+        imageIdentifier=image_arn(),
         ingressNetworkConnectors=[INGRESS],
         egressNetworkConnectors=[EGRESS],
         idlePolicy=IDLE_POLICY,
@@ -311,7 +334,7 @@ def cmd_clean(_):
         except ClientError as e:
             print(f"    (terminate skipped: {e})")
     try:
-        mv().delete_microvm_image(imageIdentifier=IMAGE_NAME)
+        mv().delete_microvm_image(imageIdentifier=image_arn())
         print("    deleted image")
     except ClientError as e:
         print(f"    (image delete skipped: {e})")
