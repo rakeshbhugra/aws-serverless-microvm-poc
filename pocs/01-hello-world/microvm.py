@@ -211,6 +211,14 @@ def cmd_package(_):
 
 
 def cmd_build(_):
+    """Kick off the image build: create-microvm-image.
+
+    Points Lambda at the S3 zip (codeArtifact), the managed AL2023 OS base
+    (baseImageArn), and the build role from `prereqs` (buildRoleArn). Lambda
+    runs the Dockerfile, starts the app, and snapshots it. Returns immediately
+    with the image in CREATING state — poll with `wait-image`. `name` takes the
+    bare image name; every later get/run/delete call needs the full image ARN.
+    """
     s = state_load()
     bucket = s.get("bucket") or bucket_name()
     resp = mv().create_microvm_image(
