@@ -185,6 +185,13 @@ def cmd_prereqs(_):
 
 
 def cmd_package(_):
+    """Zip app.py + Dockerfile (at the zip root) and upload to S3.
+
+    Produces s3://<bucket>/hello-world.zip — the code artifact `build` points
+    Lambda at via codeArtifact={"uri": ...}. Lambda downloads it, unzips, and
+    runs the Dockerfile from the zip root. Leaves a local copy of the zip in the
+    POC dir (gitignored) so you can inspect exactly what was sent.
+    """
     bucket = state_load().get("bucket") or bucket_name()
     zip_path = HERE / ZIP_KEY
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
