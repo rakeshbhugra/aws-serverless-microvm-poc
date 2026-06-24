@@ -127,7 +127,7 @@ footer{font-family:var(--mono);font-size:12px;color:var(--text-faint);text-align
     <div class="tag">The open question</div>
     <p>Our DinD model runs <code>docker compose up</code> (Postgres + Redis + FastAPI + Vite) <em>inside</em> the sandbox. The whole
     learning effort hangs on one thing: <b>can a MicroVM run that same multi-process compose stack — and can we bake it into the
-    image so it resumes pre-warmed?</b> Section 07 answers this; POC-2 proves it.</p>
+    image so it resumes pre-warmed?</b> Section 07 answers this; POC-2 proves compose runs in a VM, POC-3 proves it snapshots warm.</p>
   </div>
 
   <!-- 02 -->
@@ -235,7 +235,7 @@ footer{font-family:var(--mono);font-size:12px;color:var(--text-faint);text-align
   </ul>
   <div class="callout">
     <div class="tag">Maps to a known ryureflect concern</div>
-    <p>Postgres + Redis baked into the snapshot will resume with their old connection state. POC-2 must verify the FastAPI app
+    <p>Postgres + Redis baked into the snapshot will resume with their old connection state. POC-3 must verify the FastAPI app
     re-establishes pool connections on resume (or warms them in a <code>/run</code> hook), exactly like the snapshot-compat guidance says.</p>
   </div>
 
@@ -285,7 +285,7 @@ footer{font-family:var(--mono);font-size:12px;color:var(--text-faint);text-align
     netns, eBPF) and run a full Docker daemon + Compose <em>inside</em>, the same DinD pattern we use now. The cleaner path may be
     to <b>flatten the compose stack into co-resident processes</b> (Postgres, Redis, FastAPI, Vite as background daemons started
     by <code>CMD</code> + a process manager) so the snapshot captures them all pre-warmed. Which is better — nested Docker vs. flattened
-    processes — is exactly what POC-2 decides.</p>
+    processes — POC-2 proves compose runs in a VM at all; POC-3 decides which to bake into the snapshot.</p>
   </div>
   <div class="callout">
     <div class="tag">Pre-warmed &amp; resumable — Yes, that's the point</div>
@@ -342,38 +342,43 @@ aws lambda-microvms terminate-microvm --microvm-identifier &lt;id&gt;</pre>
   <ol class="track-list">
     <li>
       <h3>Hello-world MicroVM, end to end</h3>
-      <p>Walk the §03 lifecycle by hand in the POC account: build the Node sample image, run it, mint a token, curl it, suspend/resume/terminate. Goal: muscle memory for the CLI + confirm IAM roles.</p>
-      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">pocs/01-hello-world/ · docs/01-hello-world.html</span></div>
+      <p>Walk the §03 lifecycle by hand in the POC account: build the Python sample image, run it, mint a token, curl it, suspend/resume/terminate. Goal: muscle memory for the CLI + confirm IAM roles. <b>Done</b> — full lifecycle verified; image identified by ARN, counter survived suspend/resume.</p>
+      <div class="track-meta"><span class="badge b-ok">done</span><span class="file">pocs/01-hello-world/</span></div>
+    </li>
+    <li>
+      <h3>Run <code>docker compose up</code> inside a MicroVM</h3>
+      <p>Before snapshotting a stack, prove a full Docker daemon + a <code>docker compose</code> stack runs inside a VM at all. Minimal case: Redis + a FastAPI backend with the hit counter in Redis. <b>Done</b> — compose serves through the endpoint; biggest learning is that nested-container DNS only works via the <code>127.0.0.2</code> stub + host networking, and buildkit can't use it. See the findings doc.</p>
+      <div class="track-meta"><span class="badge b-ok">done</span><span class="file">pocs/02-docker-compose/ · docs/02-docker-compose.html</span></div>
     </li>
     <li>
       <h3>Bake a repo + compose stack into an image</h3>
-      <p>The core question (§07). Take a trimmed ryureflect house-stack, decide nested-Docker vs. flattened-processes, build an image where the stack is pre-warmed, and prove it resumes already-up. Measure resume latency.</p>
-      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">pocs/02-baked-compose/ · docs/02-baked-compose.html</span></div>
+      <p>The core question (§07). Take a trimmed ryureflect house-stack, decide nested-Docker vs. flattened-processes, build an image where the stack is pre-warmed (gate the snapshot with <code>/ready</code>), and prove it resumes already-up. Measure resume latency.</p>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">pocs/03-baked-compose/ · docs/03-baked-compose.html</span></div>
     </li>
     <li>
       <h3>Snapshot safety &amp; the /run hook</h3>
       <p>Prove the §05 gotchas empirically: show shared-entropy across VMs, then fix it with a <code>/run</code> hook; validate Postgres/Redis reconnect on resume. Deliver a snapshot-compat checklist.</p>
-      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/03-snapshot-safety.html</span></div>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/04-snapshot-safety.html</span></div>
     </li>
     <li>
       <h3>Networking deep-dive: multi-port + WebSockets</h3>
       <p>Expose Vite (HMR over WS) and FastAPI from one VM via port headers / subprotocols. Confirm SSE works for AG-UI chat. Map this to ryureflect's preview iframe + chat panes.</p>
-      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/04-networking.html</span></div>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/05-networking.html</span></div>
     </li>
     <li>
       <h3>Run Claude Code inside a MicroVM</h3>
       <p>Replicate <code>exec_claude</code>: get <code>claude -p</code> streaming stream-json from inside the VM (over the endpoint or a control channel). The agent-loop heart of ryureflect on the new substrate.</p>
-      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">pocs/05-claude-in-vm/ · docs/05-claude-in-vm.html</span></div>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">pocs/06-claude-in-vm/ · docs/06-claude-in-vm.html</span></div>
     </li>
     <li>
       <h3>MicroVMRunner — implement the seam</h3>
       <p>Write a <code>Runner</code> impl (§01) backed by MicroVMs: <code>create_workspace</code>→image build, <code>start</code>→run-microvm, <code>preview_url</code>→endpoint+token, <code>watch_files</code>, <code>stop</code>→terminate. Drop-in behind ryureflect's existing contract.</p>
-      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/06-microvm-runner.html</span></div>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/07-microvm-runner.html</span></div>
     </li>
     <li>
       <h3>Cost &amp; ops model</h3>
       <p>Baseline/peak pricing, idle suspend math, image build cost, vs. our current host-DinD bill. When does MicroVMs actually win? Plus base-image deprecation/patching cadence.</p>
-      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/07-cost-ops.html</span></div>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/08-cost-ops.html</span></div>
     </li>
   </ol>
 

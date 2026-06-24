@@ -13,13 +13,14 @@ backend for [ryureflect](../../ryureflect)'s per-project sandbox `Runner` seam.
 
 ## The roadmap (see docs/index.html §09)
 
-1. Hello-world MicroVM end to end
-2. Bake a repo + compose stack into an image  ← the core question
-3. Snapshot safety & the `/run` hook
-4. Networking: multi-port + WebSockets
-5. Run Claude Code inside a MicroVM
-6. `MicroVMRunner` — implement the ryureflect seam
-7. Cost & ops model
+1. Hello-world MicroVM end to end — **done**
+2. Run `docker compose up` inside a MicroVM — in progress
+3. Bake a repo + compose stack into an image  ← the core question
+4. Snapshot safety & the `/run` hook
+5. Networking: multi-port + WebSockets
+6. Run Claude Code inside a MicroVM
+7. `MicroVMRunner` — implement the ryureflect seam
+8. Cost & ops model
 
 Open the index locally:
 
