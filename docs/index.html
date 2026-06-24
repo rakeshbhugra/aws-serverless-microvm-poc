@@ -1,0 +1,437 @@
+<meta charset="utf-8">
+<title>AWS Lambda MicroVMs — Learning Plan</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  --bg:#000;--surface:#0a0a0a;--surface-2:#111;--border:#262626;--border-bright:#3a3a3a;
+  --text:#ededed;--text-dim:#8a8a8a;--text-faint:#5c5c5c;--accent:#fff;
+  --mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:920px;margin:0 auto;padding:72px 28px 120px}
+h1{font-size:40px;line-height:1.12;font-weight:600;letter-spacing:-.02em;margin:0 0 22px;
+  background:linear-gradient(180deg,#fff,#9a9a9a);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--text-faint);margin-bottom:18px}
+h2{font-size:13px;font-family:var(--mono);letter-spacing:.22em;text-transform:uppercase;color:var(--text-faint);
+  margin:64px 0 28px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+h2 .num{color:var(--accent)}
+h3{font-size:20px;font-weight:600;letter-spacing:-.01em;margin:32px 0 12px}
+p{color:#cfcfcf;font-size:16px}
+.lede{font-size:18px;color:var(--text-dim);border-left:2px solid var(--border-bright);padding-left:18px;margin:24px 0 8px}
+code{font-family:var(--mono);font-size:.86em;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:1px 6px;color:#e0e0e0}
+a{color:var(--text);border-bottom:1px solid var(--border-bright);text-decoration:none}
+.meta{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 0}
+.chip{font-family:var(--mono);font-size:12px;color:var(--text-dim);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:4px 10px}
+.callout{border:1px solid var(--border-bright);border-left:3px solid #6a6a6a;border-radius:10px;padding:18px 22px;background:var(--surface);margin:24px 0}
+.callout .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-faint);margin-bottom:8px}
+.callout p{margin:0;font-size:15px}
+.badge{font-family:var(--mono);font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;border:1px solid var(--border-bright);display:inline-block}
+.b-ok{color:#fff;background:#1c1c1c;border-color:#555}
+.b-warn{color:#c9c9c9;background:#141414;border-color:#3a3a3a;border-style:dashed}
+.b-bad{color:#8a8a8a;background:#0d0d0d;border-color:#2a2a2a}
+table{width:100%;border-collapse:collapse;margin:24px 0;font-size:14px}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-faint);text-align:left;padding:10px 12px;border-bottom:1px solid var(--border-bright)}
+td{padding:11px 12px;border-bottom:1px solid var(--border);color:#cfcfcf;vertical-align:top}
+td code{white-space:nowrap}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:24px 0}
+.shift{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px}
+.shift .from{font-family:var(--mono);font-size:12px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.1em}
+.shift .to{font-size:15px;color:var(--text);margin-top:6px}
+ul.clean{list-style:none;padding:0;margin:22px 0}
+ul.clean li{border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:10px;background:var(--surface);font-size:15px;color:#cfcfcf}
+ul.clean li b{color:var(--text)}
+.track-list{counter-reset:tr;list-style:none;padding:0;margin:22px 0}
+.track-list li{position:relative;border:1px solid var(--border);border-radius:12px;padding:18px 20px 18px 64px;margin-bottom:12px;background:var(--surface)}
+.track-list li::before{counter-increment:tr;content:counter(tr,decimal-leading-zero);position:absolute;left:20px;top:18px;font-family:var(--mono);font-size:13px;color:var(--accent)}
+.track-list h3{margin:0 0 6px;font-size:17px}
+.track-list p{margin:0;font-size:14px;color:var(--text-dim)}
+.track-meta{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.track-meta .file{color:var(--text-dim)}
+pre{background:#070707;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#d8d8d8;margin:18px 0}
+.sources{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:22px 0}
+.sources a{display:block;border:1px solid var(--border);border-radius:9px;padding:12px 14px;font-size:13px;background:var(--surface)}
+.sources .s-t{color:var(--text);font-weight:600}
+.sources .s-u{font-family:var(--mono);font-size:11px;color:var(--text-faint);word-break:break-all;margin-top:4px}
+footer{font-family:var(--mono);font-size:12px;color:var(--text-faint);text-align:center;margin-top:80px;border-top:1px solid var(--border);padding-top:28px}
+
+/* walkthrough */
+.walk{background:radial-gradient(800px 320px at 50% -10%,#141414,transparent 70%),var(--surface);
+  border:1px solid var(--border);border-radius:16px;padding:32px 28px;margin:24px 0}
+.walk-track{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
+.wnode{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:118px;cursor:pointer;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:16px 14px;
+  color:var(--text-dim);font-family:var(--sans);transition:all .2s;opacity:.55}
+.wnode:hover{opacity:.85;border-color:var(--border-bright)}
+.wnode.active{opacity:1;border-color:#6a6a6a;color:var(--text);
+  background:linear-gradient(180deg,#1a1a1a,#0e0e0e);box-shadow:0 12px 44px -22px rgba(255,255,255,.3)}
+.wnode.done{opacity:.8;border-color:var(--border-bright)}
+.wn-num{font-family:var(--mono);font-size:12px;font-weight:600;width:24px;height:24px;border-radius:7px;
+  display:inline-flex;align-items:center;justify-content:center;background:#222;color:var(--text-dim)}
+.wnode.active .wn-num{background:var(--accent);color:#000}
+.wn-title{font-size:13.5px;font-weight:600;text-align:center}
+.wn-arrow{color:var(--text-faint);font-family:var(--mono)}
+.walk-detail{margin-top:24px;border:1px solid var(--border);border-radius:12px;padding:20px 22px;background:#000;min-height:104px}
+.wd-stage{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-faint);margin-bottom:10px}
+.wd-body{margin:0;color:#cfcfcf;font-size:15px}
+.wd-body code{font-size:.82em}
+.walk-nav{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:22px}
+.wbtn{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--surface-2);
+  border:1px solid var(--border-bright);border-radius:9px;padding:9px 18px;cursor:pointer;transition:all .15s}
+.wbtn:hover:not(:disabled){background:#1c1c1c;border-color:#5a5a5a}
+.wbtn:disabled{opacity:.3;cursor:not-allowed}
+.wcount{font-family:var(--mono);font-size:13px;color:var(--text-dim)}
+.wcount b{color:var(--text)}
+@media(max-width:680px){
+  h1{font-size:30px}.wn-arrow{display:none}.wnode{min-width:0;flex:1 1 80px}
+  .grid2,.sources{grid-template-columns:1fr}
+}
+</style>
+
+<div class="wrap">
+
+  <div class="eyebrow">Learning Plan · Index</div>
+  <h1>AWS Lambda MicroVMs</h1>
+  <div class="meta">
+    <span class="chip">2026-06-24</span>
+    <span class="chip">Rakesh Bhugra</span>
+    <span class="chip">#firecracker</span>
+    <span class="chip">#sandboxes</span>
+    <span class="chip">#ryureflect</span>
+  </div>
+  <p class="lede">Lambda MicroVMs are a new serverless primitive (GA June 2026) for running untrusted / AI-generated code in
+  strongly-isolated, <em>stateful</em>, suspend-resumable sandboxes — one VM per user session. This doc is the index for our
+  learning effort: the mental model, the lifecycle, answers to our core questions (snapshots, resumability, baking our repo
+  + <code>docker compose</code> in), and a numbered roadmap of follow-up docs and POCs we'll add to <code>docs/</code> and <code>pocs/</code>.</p>
+
+  <!-- 01 -->
+  <h2><span class="num">01</span> &nbsp;Why we care — the ryureflect angle</h2>
+  <p>ryureflect today gives every project its <b>own privileged Docker-in-Docker container</b> on a host daemon: bind-mount a
+  workspace, run the project's <code>docker compose</code> stack inside, and <code>docker exec</code> Claude Code into it. It already
+  hides everything behind a <code>Runner</code> seam (<code>backend/app/runner/base.py</code>) precisely so a microVM backend can drop in.
+  Lambda MicroVMs is a near-exact match for that seam: per-session VM isolation, fast resume, lifecycle control, no servers to manage.</p>
+
+  <div class="grid2">
+    <div class="shift"><div class="from">Today · DinDRunner</div><div class="to">Privileged <code>docker:dind</code> per project on our own host daemon</div></div>
+    <div class="shift"><div class="from">Candidate · MicroVMRunner</div><div class="to">One Firecracker MicroVM per project, AWS-managed, billed per second</div></div>
+    <div class="shift"><div class="from">Today · isolation</div><div class="to">Shared host kernel; privileged container = blast radius</div></div>
+    <div class="shift"><div class="from">Candidate · isolation</div><div class="to">VM-level, no shared kernel between tenants</div></div>
+    <div class="shift"><div class="from">Today · idle cost</div><div class="to">Container sits resident burning host RAM</div></div>
+    <div class="shift"><div class="from">Candidate · idle cost</div><div class="to">Auto-suspend (memory+disk preserved), pay reduced idle rate</div></div>
+    <div class="shift"><div class="from">Today · preview</div><div class="to">iframe → host port → inner dev server</div></div>
+    <div class="shift"><div class="from">Candidate · preview</div><div class="to">iframe → per-VM HTTPS endpoint + JWE token + port header</div></div>
+  </div>
+
+  <div class="callout">
+    <div class="tag">The open question</div>
+    <p>Our DinD model runs <code>docker compose up</code> (Postgres + Redis + FastAPI + Vite) <em>inside</em> the sandbox. The whole
+    learning effort hangs on one thing: <b>can a MicroVM run that same multi-process compose stack — and can we bake it into the
+    image so it resumes pre-warmed?</b> Section 07 answers this; POC-2 proves it.</p>
+  </div>
+
+  <!-- 02 -->
+  <h2><span class="num">02</span> &nbsp;The four nouns</h2>
+  <p>Everything in MicroVMs is built from four resources. Get these straight and the rest follows.</p>
+  <table>
+    <tr><th>Resource</th><th>What it is</th><th>Analogy</th></tr>
+    <tr><td><b>MicroVM Image</b></td><td>A built, versioned snapshot of your fully-initialized app (disk + memory). Built from a zip of <code>Dockerfile</code> + code in S3.</td><td>A Docker image, but it remembers running processes</td></tr>
+    <tr><td><b>MicroVM</b></td><td>A live instance resumed from an image snapshot. One per user/session/job. Up to 8h total runtime.</td><td>A running container / a VM</td></tr>
+    <tr><td><b>Snapshot</b></td><td>The Firecracker capture taken at build time — RAM of all processes, full rootfs, open FDs. This is what makes resume near-instant.</td><td>VM "saved state" / hibernation</td></tr>
+    <tr><td><b>Network Connector</b></td><td>Reusable ingress/egress config referenced by ARN at run time. AWS-managed ones for all-ingress + internet-egress; create your own for VPC egress.</td><td>Security group + LB rolled together</td></tr>
+  </table>
+
+  <!-- 03 -->
+  <h2><span class="num">03</span> &nbsp;The full lifecycle</h2>
+  <p>Step through the end-to-end path from packaged code to a terminated VM. Click a node, use the buttons, or arrow keys.</p>
+
+  <div class="walk" data-walk>
+    <div class="walk-track">
+      <button class="wnode" data-i="0"><span class="wn-num">1</span><span class="wn-title">Package</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="1"><span class="wn-num">2</span><span class="wn-title">Create Image</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="2"><span class="wn-num">3</span><span class="wn-title">Run VM</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="3"><span class="wn-num">4</span><span class="wn-title">Connect</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="4"><span class="wn-num">5</span><span class="wn-title">Suspend</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="5"><span class="wn-num">6</span><span class="wn-title">Resume</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="6"><span class="wn-num">7</span><span class="wn-title">Terminate</span></button>
+    </div>
+    <div class="walk-detail">
+      <div class="wd-stage" data-detail="0">Step 1 · Package &amp; upload</div>
+      <p class="wd-body" data-detail="0">Zip a <code>Dockerfile</code> + your app artifacts and <code>aws s3 cp app.zip s3://bucket/</code>. The Dockerfile's <code>FROM</code> is your <em>container</em> base image; the MicroVM <em>OS</em> base image (Amazon Linux 2023) is passed separately as <code>--base-image-arn</code>.</p>
+      <div class="wd-stage" data-detail="1" hidden>Step 2 · create-microvm-image (one-time, slow)</div>
+      <p class="wd-body" data-detail="1" hidden><code>create-microvm-image</code> pulls the zip, runs your Dockerfile on the AL2023 base, starts your app via <code>CMD</code>, waits for your <code>/ready</code> hook, then takes a Firecracker snapshot. State goes <code>CREATING → CREATED</code>. This is the expensive step you do once per code version.</p>
+      <div class="wd-stage" data-detail="2" hidden>Step 3 · run-microvm (per session, fast)</div>
+      <p class="wd-body" data-detail="2" hidden><code>run-microvm --image-identifier … --ingress-network-connectors … --egress-network-connectors … --idle-policy …</code>. Resumes from the snapshot — no boot, no app init. Returns a <code>microvmId</code> + a dedicated <code>*.lambda-microvm.&lt;region&gt;.on.aws</code> endpoint. State <code>PENDING → RUNNING</code>.</p>
+      <div class="wd-stage" data-detail="3" hidden>Step 4 · Connect over HTTPS</div>
+      <p class="wd-body" data-detail="3" hidden>Mint a JWE token with <code>create-microvm-auth-token</code> (scoped to VM + ports + expiry). Hit the endpoint with <code>X-aws-proxy-auth: &lt;token&gt;</code> and <code>X-aws-proxy-port: &lt;N&gt;</code>. Supports HTTP/1.1, HTTP/2, WebSockets, gRPC, SSE — everything ryureflect's chat (SSE) and preview (HMR/WS) need.</p>
+      <div class="wd-stage" data-detail="4" hidden>Step 5 · Suspend (idle)</div>
+      <p class="wd-body" data-detail="4" hidden>After the idle window, the VM suspends — <b>memory + disk preserved</b> — at a reduced cost. Triggered automatically by the <code>--idle-policy</code> or explicitly via <code>suspend-microvm</code>. This is the cost win over a resident DinD container.</p>
+      <div class="wd-stage" data-detail="5" hidden>Step 6 · Resume (traffic returns)</div>
+      <p class="wd-body" data-detail="5" hidden>With <code>autoResumeEnabled:true</code>, the next request auto-resumes the VM (the endpoint 502s only if resume exhausts retries). Or call <code>resume-microvm</code>. Near-instant because it's a snapshot restore, not a boot. Processes pick up exactly where they were.</p>
+      <div class="wd-stage" data-detail="6" hidden>Step 7 · Terminate</div>
+      <p class="wd-body" data-detail="6" hidden>When the session ends, <code>terminate-microvm</code> releases all resources and stops billing. Max lifetime is 8h regardless. The <em>image</em> stays around to launch fresh VMs for the next user.</p>
+    </div>
+    <div class="walk-nav">
+      <button class="wbtn wprev">← Back</button>
+      <span class="wcount"><b>1</b> / 7</span>
+      <button class="wbtn wnext">Next →</button>
+    </div>
+  </div>
+
+  <!-- 04 -->
+  <h2><span class="num">04</span> &nbsp;Image build &amp; the snapshot hooks</h2>
+  <p>The build is where the "remembers running processes" magic happens. Two HTTP lifecycle hooks let your app gate the snapshot.</p>
+
+  <div class="walk" data-walk>
+    <div class="walk-track">
+      <button class="wnode" data-i="0"><span class="wn-num">1</span><span class="wn-title">Fetch zip</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="1"><span class="wn-num">2</span><span class="wn-title">Run Dockerfile</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="2"><span class="wn-num">3</span><span class="wn-title">Start app</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="3"><span class="wn-num">4</span><span class="wn-title">/ready hook</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="4"><span class="wn-num">5</span><span class="wn-title">Snapshot</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="5"><span class="wn-num">6</span><span class="wn-title">/validate hook</span></button>
+    </div>
+    <div class="walk-detail">
+      <div class="wd-stage" data-detail="0">Step 1 · Retrieve artifacts</div>
+      <p class="wd-body" data-detail="0">Lambda assumes your <code>--build-role-arn</code>, pulls the zip from S3 (and any private ECR base image), and streams build logs to CloudWatch at <code>/aws/lambda/microvms/&lt;image-name&gt;</code>.</p>
+      <div class="wd-stage" data-detail="1" hidden>Step 2 · Execute Dockerfile on AL2023 base</div>
+      <p class="wd-body" data-detail="1" hidden>Runs your Dockerfile instructions inside a fresh MicroVM started from the managed base image. <b>This is where you clone the repo, install deps, pull container images, warm caches</b> — anything baked here lands in the snapshot's disk.</p>
+      <div class="wd-stage" data-detail="2" hidden>Step 3 · Launch via ENTRYPOINT/CMD</div>
+      <p class="wd-body" data-detail="2" hidden>Your <code>CMD</code> starts the app (and any background daemons). These <em>running processes</em> — not just files — are what get captured. A pre-started server resumes already-listening.</p>
+      <div class="wd-stage" data-detail="3" hidden>Step 4 · /ready hook (gate)</div>
+      <p class="wd-body" data-detail="3" hidden>Lambda polls <code>GET /aws/lambda-microvms/runtime/v1/ready</code> on your declared port. Return <b>503</b> (immediately, don't hold) while still initializing; return <b>200</b> when warm. Timeout 1–3600s (<code>readyTimeoutInSeconds</code>). 200 triggers the snapshot.</p>
+      <div class="wd-stage" data-detail="4" hidden>Step 5 · Firecracker snapshot</div>
+      <p class="wd-body" data-detail="4" hidden>Captures RAM of all processes + full rootfs + open FDs/connections. Image version → <code>CREATED</code>/<code>SUCCESSFUL</code>/<code>ACTIVE</code>. Every future <code>run-microvm</code> restores from exactly this point.</p>
+      <div class="wd-stage" data-detail="5" hidden>Step 6 · /validate hook (optional)</div>
+      <p class="wd-body" data-detail="5" hidden>Lambda starts a fresh VM <em>from the new snapshot</em> and calls <code>/validate</code> to confirm it resumes correctly. Running mock payloads here also lets Lambda pre-fetch the snapshot regions you touch, speeding real cold resumes.</p>
+    </div>
+    <div class="walk-nav">
+      <button class="wbtn wprev">← Back</button>
+      <span class="wcount"><b>1</b> / 6</span>
+      <button class="wbtn wnext">Next →</button>
+    </div>
+  </div>
+
+  <!-- 05 -->
+  <h2><span class="num">05</span> &nbsp;Snapshots &amp; resumability — the gotchas</h2>
+  <p>Resumability is the headline feature and the main footgun. Because <b>every VM from one image shares identical initial
+  state</b>, anything "unique" generated at build time is cloned across all tenants.</p>
+  <ul class="clean">
+    <li><b>Uniqueness must be deferred.</b> IDs, secrets, session keys, entropy seeds generated <em>during build</em> are identical in every VM. Generate them <em>after</em> the VM starts — use the <code>/run</code> lifecycle hook to reset per-VM unique state.</li>
+    <li><b>CSPRNGs are fine</b> if they read from <code>/dev/urandom</code> (default in Python 3.12+ <code>secrets</code>, Node <code>crypto</code>, Java 11+ <code>SecureRandom</code>). Snapshot-safe.</li>
+    <li><b>OpenSSL needs the patched build.</b> Use AWS's base container image <code>public.ecr.aws/lambda/microvms:al2023-minimal</code> (ships <code>openssl-snapsafe-libs</code>) or you risk repeated randomness across resumes.</li>
+    <li><b>Network connections may go stale.</b> Connections opened at build time may need re-establishing on resume; AWS SDK clients usually reconnect automatically. Validate DB/Redis connections on resume — directly relevant to our compose stack.</li>
+  </ul>
+  <div class="callout">
+    <div class="tag">Maps to a known ryureflect concern</div>
+    <p>Postgres + Redis baked into the snapshot will resume with their old connection state. POC-2 must verify the FastAPI app
+    re-establishes pool connections on resume (or warms them in a <code>/run</code> hook), exactly like the snapshot-compat guidance says.</p>
+  </div>
+
+  <!-- 06 -->
+  <h2><span class="num">06</span> &nbsp;Networking — how the browser reaches the VM</h2>
+  <p>Each VM gets one HTTPS endpoint. Auth is a per-request JWE token; the target port is chosen by header.</p>
+  <div class="walk" data-walk>
+    <div class="walk-track">
+      <button class="wnode" data-i="0"><span class="wn-num">1</span><span class="wn-title">Pick connectors</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="1"><span class="wn-num">2</span><span class="wn-title">Get endpoint</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="2"><span class="wn-num">3</span><span class="wn-title">Mint token</span></button>
+      <span class="wn-arrow">→</span>
+      <button class="wnode" data-i="3"><span class="wn-num">4</span><span class="wn-title">Route by port</span></button>
+    </div>
+    <div class="walk-detail">
+      <div class="wd-stage" data-detail="0">Step 1 · Choose ingress + egress connectors</div>
+      <p class="wd-body" data-detail="0">At <code>run-microvm</code>: AWS-managed <code>ALL_INGRESS</code> for inbound, <code>INTERNET_EGRESS</code> for outbound. Connectors are immutable once the VM runs and are reused across many VMs. Swap egress for a VPC connector to reach RDS/ElastiCache.</p>
+      <div class="wd-stage" data-detail="1" hidden>Step 2 · Dedicated endpoint</div>
+      <p class="wd-body" data-detail="1" hidden>Each VM is reachable at <code>&lt;id&gt;.lambda-microvm.&lt;region&gt;.on.aws</code> over TLS. No load balancer to provision. Default routing target is port <code>8080</code> inside the VM.</p>
+      <div class="wd-stage" data-detail="2" hidden>Step 3 · JWE auth token</div>
+      <p class="wd-body" data-detail="2" hidden><code>create-microvm-auth-token --expiration-in-minutes 30 --allowed-ports '[{"port":5173}]'</code>. Encrypted, scoped to one VM + a port set + expiry. Send as <code>X-aws-proxy-auth</code>. Wrong/expired token or out-of-scope port → 403.</p>
+      <div class="wd-stage" data-detail="3" hidden>Step 4 · Multi-port routing</div>
+      <p class="wd-body" data-detail="3" hidden>Target a port via <code>X-aws-proxy-port: N</code> header, or for WebSockets the subprotocol <code>lambda-microvms.port.N</code>. This is how one VM exposes Vite (5173) <em>and</em> FastAPI (8000) — token must allow both ports.</p>
+    </div>
+    <div class="walk-nav">
+      <button class="wbtn wprev">← Back</button>
+      <span class="wcount"><b>1</b> / 4</span>
+      <button class="wbtn wnext">Next →</button>
+    </div>
+  </div>
+
+  <!-- 07 -->
+  <h2><span class="num">07</span> &nbsp;Can we bake our repo + <code>docker compose up</code> in?</h2>
+  <p>This is the question that started the whole thing. Short answer below, with the nuance that matters.</p>
+
+  <div class="callout">
+    <div class="tag">Repo pre-clone — Yes, cleanly</div>
+    <p>The Dockerfile build phase runs with internet access. <code>RUN git clone …</code> (or <code>COPY</code> the workspace in) + install
+    deps lands in the snapshot's disk. Every VM resumes with the repo already present — no clone latency at session start. This
+    directly replaces ryureflect's "copy golden template into workspace" step for the <em>baked</em> parts.</p>
+  </div>
+  <div class="callout">
+    <div class="tag">docker compose up inside — Yes, but it's the real POC</div>
+    <p>A MicroVM is a full VM with OS capabilities — you can grant <code>--additional-os-capabilities '["ALL"]'</code> (mount FS,
+    netns, eBPF) and run a full Docker daemon + Compose <em>inside</em>, the same DinD pattern we use now. The cleaner path may be
+    to <b>flatten the compose stack into co-resident processes</b> (Postgres, Redis, FastAPI, Vite as background daemons started
+    by <code>CMD</code> + a process manager) so the snapshot captures them all pre-warmed. Which is better — nested Docker vs. flattened
+    processes — is exactly what POC-2 decides.</p>
+  </div>
+  <div class="callout">
+    <div class="tag">Pre-warmed &amp; resumable — Yes, that's the point</div>
+    <p>Because the snapshot captures <em>running processes</em>, a compose stack started and warmed at build time resumes already-up.
+    No <code>docker compose up</code> wait at session start. Caveat from §05: re-validate DB/Redis connections on resume and defer any
+    unique IDs to a <code>/run</code> hook.</p>
+  </div>
+
+  <table>
+    <tr><th>Constraint</th><th>Value</th><th>ryureflect impact</th></tr>
+    <tr><td>Architecture</td><td>ARM64 only</td><td>Our images must be arm64 — check Vite/Postgres/Claude CLI arm64 builds</td></tr>
+    <tr><td>Max size (peak)</td><td>32 GB / 16 vCPU</td><td>Plenty for a single project compose stack</td></tr>
+    <tr><td>Disk</td><td>32 GB per VM</td><td>Fine for repo + deps + DB volume; watch node_modules bloat</td></tr>
+    <tr><td>Max runtime</td><td>8 hours total</td><td>Long coding sessions OK; very long-lived projects need re-launch</td></tr>
+    <tr><td>Sizing</td><td>baseline→4× peak, per-second</td><td>Set baseline ~1GB, burst on builds; cheap idle</td></tr>
+    <tr><td>Regions</td><td>us-east-1/2, us-west-2, eu-west-1, ap-northeast-1</td><td>Our POC account is us-east-1 (N. Virginia) ✓</td></tr>
+  </table>
+
+  <!-- 08 -->
+  <h2><span class="num">08</span> &nbsp;Command cheat-sheet</h2>
+  <pre># 1. package + upload
+zip app.zip Dockerfile app.js
+aws s3 cp app.zip s3://&lt;bucket&gt;/app.zip
+
+# 2. build the image (slow, once per code version)
+aws lambda-microvms create-microvm-image \
+  --name ryu-sandbox \
+  --code-artifact uri=s3://&lt;bucket&gt;/app.zip \
+  --base-image-arn arn:aws:lambda:us-east-1:aws:microvm-image:al2023-1 \
+  --build-role-arn arn:aws:iam::&lt;acct&gt;:role/MicrovmBuildRole
+aws lambda-microvms get-microvm-image --image-identifier ryu-sandbox   # wait for CREATED
+
+# 3. run a VM (fast, per session)
+aws lambda-microvms run-microvm \
+  --image-identifier ryu-sandbox \
+  --ingress-network-connectors arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:ALL_INGRESS \
+  --egress-network-connectors  arn:aws:lambda:us-east-1:aws:network-connector:aws-network-connector:INTERNET_EGRESS \
+  --idle-policy '{"autoResumeEnabled":true,"maxIdleDurationSeconds":900,"suspendedDurationSeconds":300}'
+
+# 4. connect
+aws lambda-microvms create-microvm-auth-token --microvm-identifier &lt;id&gt; \
+  --expiration-in-minutes 30 --allowed-ports '[{"allPorts":{}}]'
+curl https://&lt;id&gt;.lambda-microvm.us-east-1.on.aws/ -H "X-aws-proxy-auth: &lt;token&gt;"
+
+# 5. lifecycle
+aws lambda-microvms suspend-microvm  --microvm-identifier &lt;id&gt;
+aws lambda-microvms resume-microvm   --microvm-identifier &lt;id&gt;
+aws lambda-microvms terminate-microvm --microvm-identifier &lt;id&gt;</pre>
+
+  <!-- 09 -->
+  <h2><span class="num">09</span> &nbsp;The learning roadmap — docs &amp; POCs to add</h2>
+  <p>Each track becomes its own doc in <code>docs/</code> and/or a runnable POC in <code>pocs/</code>. Status badges track progress.</p>
+
+  <ol class="track-list">
+    <li>
+      <h3>Hello-world MicroVM, end to end</h3>
+      <p>Walk the §03 lifecycle by hand in the POC account: build the Node sample image, run it, mint a token, curl it, suspend/resume/terminate. Goal: muscle memory for the CLI + confirm IAM roles.</p>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">pocs/01-hello-world/ · docs/01-hello-world.html</span></div>
+    </li>
+    <li>
+      <h3>Bake a repo + compose stack into an image</h3>
+      <p>The core question (§07). Take a trimmed ryureflect house-stack, decide nested-Docker vs. flattened-processes, build an image where the stack is pre-warmed, and prove it resumes already-up. Measure resume latency.</p>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">pocs/02-baked-compose/ · docs/02-baked-compose.html</span></div>
+    </li>
+    <li>
+      <h3>Snapshot safety &amp; the /run hook</h3>
+      <p>Prove the §05 gotchas empirically: show shared-entropy across VMs, then fix it with a <code>/run</code> hook; validate Postgres/Redis reconnect on resume. Deliver a snapshot-compat checklist.</p>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/03-snapshot-safety.html</span></div>
+    </li>
+    <li>
+      <h3>Networking deep-dive: multi-port + WebSockets</h3>
+      <p>Expose Vite (HMR over WS) and FastAPI from one VM via port headers / subprotocols. Confirm SSE works for AG-UI chat. Map this to ryureflect's preview iframe + chat panes.</p>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/04-networking.html</span></div>
+    </li>
+    <li>
+      <h3>Run Claude Code inside a MicroVM</h3>
+      <p>Replicate <code>exec_claude</code>: get <code>claude -p</code> streaming stream-json from inside the VM (over the endpoint or a control channel). The agent-loop heart of ryureflect on the new substrate.</p>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">pocs/05-claude-in-vm/ · docs/05-claude-in-vm.html</span></div>
+    </li>
+    <li>
+      <h3>MicroVMRunner — implement the seam</h3>
+      <p>Write a <code>Runner</code> impl (§01) backed by MicroVMs: <code>create_workspace</code>→image build, <code>start</code>→run-microvm, <code>preview_url</code>→endpoint+token, <code>watch_files</code>, <code>stop</code>→terminate. Drop-in behind ryureflect's existing contract.</p>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/06-microvm-runner.html</span></div>
+    </li>
+    <li>
+      <h3>Cost &amp; ops model</h3>
+      <p>Baseline/peak pricing, idle suspend math, image build cost, vs. our current host-DinD bill. When does MicroVMs actually win? Plus base-image deprecation/patching cadence.</p>
+      <div class="track-meta"><span class="badge b-warn">planned</span><span class="file">docs/07-cost-ops.html</span></div>
+    </li>
+  </ol>
+
+  <!-- 10 -->
+  <h2><span class="num">10</span> &nbsp;Open questions to chase</h2>
+  <ul class="clean">
+    <li>Is there a <code>boto3</code> / SDK surface yet, or CLI + raw API only? (the runner impl needs it)</li>
+    <li>How does the <code>/run</code> hook actually fire — HTTP like ready/validate, and on every resume or only first start?</li>
+    <li>Per-account concurrent-VM limits — enough for one VM per active ryureflect project?</li>
+    <li>Can we update an image's code without a full rebuild, or is every code change a new <code>create</code>/<code>update</code> + snapshot? (affects iteration speed)</li>
+    <li>File-watching inside a VM for the Files pane — inotify over a control port, or poll?</li>
+    <li>ARM64-only: do all our images (Claude CLI, Vite toolchain, Postgres) have clean arm64 builds?</li>
+  </ul>
+
+  <!-- 11 -->
+  <h2><span class="num">11</span> &nbsp;Sources</h2>
+  <div class="sources">
+    <a href="https://aws.amazon.com/blogs/aws/run-isolated-sandboxes-with-full-lifecycle-control-aws-lambda-introduces-microvms/"><span class="s-t">Announcement: Lambda introduces MicroVMs</span><span class="s-u">aws.amazon.com/blogs/aws/run-isolated-sandboxes…</span></a>
+    <a href="https://docs.aws.amazon.com/lambda/latest/dg/lambda-microvms-guide.html"><span class="s-t">Docs: Lambda MicroVMs guide</span><span class="s-u">docs.aws.amazon.com/…/lambda-microvms-guide.html</span></a>
+    <a href="https://docs.aws.amazon.com/lambda/latest/dg/microvms-getting-started.html"><span class="s-t">Docs: Create your first MicroVM</span><span class="s-u">docs.aws.amazon.com/…/microvms-getting-started.html</span></a>
+    <a href="https://docs.aws.amazon.com/lambda/latest/dg/microvms-images.html"><span class="s-t">Docs: MicroVM images, hooks, sizing</span><span class="s-u">docs.aws.amazon.com/…/microvms-images.html</span></a>
+    <a href="https://docs.aws.amazon.com/lambda/latest/dg/microvms-images-snapshots.html"><span class="s-t">Docs: Working with snapshots</span><span class="s-u">docs.aws.amazon.com/…/microvms-images-snapshots.html</span></a>
+    <a href="https://docs.aws.amazon.com/lambda/latest/dg/microvms-networking.html"><span class="s-t">Docs: Networking &amp; connectors</span><span class="s-u">docs.aws.amazon.com/…/microvms-networking.html</span></a>
+    <a href="https://aws.amazon.com/lambda/lambda-microvms/"><span class="s-t">Product page: Lambda MicroVMs</span><span class="s-u">aws.amazon.com/lambda/lambda-microvms/</span></a>
+    <a href="https://www.theregister.com/devops/2026/06/23/aws-debuts-lambda-microvms-with-up-to-8-hours-runtime/"><span class="s-t">The Register: 8-hour runtime debut</span><span class="s-u">theregister.com/devops/2026/06/23/aws-debuts-lambda-microvms…</span></a>
+  </div>
+
+  <footer>docs/index.html · OLED-black learning index · AWS Lambda MicroVMs × ryureflect · 2026-06-24</footer>
+
+</div>
+
+<script>
+document.querySelectorAll('[data-walk]').forEach(function(walk){
+  var nodes   = walk.querySelectorAll('.wnode');
+  var details = walk.querySelectorAll('[data-detail]');
+  var prev    = walk.querySelector('.wprev');
+  var next    = walk.querySelector('.wnext');
+  var count   = walk.querySelector('.wcount b');
+  var total   = nodes.length;
+  var i = 0;
+  function render(){
+    nodes.forEach(function(n,idx){
+      n.classList.toggle('active', idx===i);
+      n.classList.toggle('done', idx<i);
+    });
+    details.forEach(function(d){ d.hidden = (+d.dataset.detail !== i); });
+    if(count) count.textContent = i+1;
+    prev.disabled = i===0;
+    next.disabled = i===total-1;
+  }
+  next.addEventListener('click', function(){ if(i<total-1){i++;render();} });
+  prev.addEventListener('click', function(){ if(i>0){i--;render();} });
+  nodes.forEach(function(n){ n.addEventListener('click', function(){ i=+n.dataset.i; render(); }); });
+  walk.tabIndex = 0;
+  walk.addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight'){ if(i<total-1){i++;render();} }
+    if(e.key==='ArrowLeft'){ if(i>0){i--;render();} }
+  });
+  render();
+});
+</script>
