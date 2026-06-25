@@ -22,7 +22,7 @@ image/                     # MicroVM image build context (flattened Debian, no D
   debug-exec.py            # :9000 control endpoint
   app-up.sh                # start redis+backend+frontend directly
   shot.cjs                 # playwright chromium -> screenshot (--no-sandbox)
-microvm.py                 # driver: lifecycle + app-up / shot / pull / agent
+microvm.py                 # driver: lifecycle + app-up (starts app + warms chromium) / shot / pull / agent
 ```
 
 The VM boots **idle** — it does not auto-run anything. We hand it files + tools
@@ -49,8 +49,8 @@ uv run python microvm.py wait-image
 uv run python microvm.py run
 uv run python microvm.py wait
 uv run python microvm.py token
-uv run python microvm.py app-up         # start redis + backend + frontend in the VM
-uv run python microvm.py shot           # playwright -> /workspace/screenshots/button.png
+uv run python microvm.py app-up         # start redis + backend + frontend + pre-warm chromium
+uv run python microvm.py shot           # playwright -> /workspace/screenshots/button.png (fast: chromium pre-warmed)
 uv run python microvm.py pull /workspace/screenshots/button.png ./button.png
 xdg-open ./button.png                    # the screenshot (gitignored, local only)
 ```
@@ -86,9 +86,11 @@ uv run python microvm.py clean               # also deletes the image (bucket/ro
 
 - **Playwright + headless Chromium work on an arm64 MicroVM** (`--no-sandbox`,
   since Chromium runs as root). The browser launches and screenshots cleanly.
-- **The first Chromium launch in a fresh VM is cold/slow** — `shot` retries once
-  to absorb it. Run driver commands individually (don't chain many in one shell
-  — they add up past the 2-min ceiling).
+- **The first Chromium launch in a fresh VM is cold/slow** (tens of seconds, one
+  time per VM — not memory/CPU bound). So `app-up` now **pre-warms Chromium**,
+  paying that cost where you expect a pause instead of ambushing the first `shot`;
+  `shot` also retries once as a backstop. Run driver commands individually (don't
+  chain many in one shell — they add up past the 2-min ceiling).
 - **No Docker needed** — running the app flattened (redis + uvicorn + http.server)
   sidesteps the nested-DNS constraints from POC 02 entirely. Everything is a host
   process, so DNS via the `127.0.0.2` stub just works; the screenshot only hits

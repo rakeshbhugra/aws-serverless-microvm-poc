@@ -253,8 +253,16 @@ def cmd_shell(args):
 
 
 def cmd_app_up(_):
-    """Start redis + backend + frontend inside the VM (no Docker)."""
+    """Start redis + backend + frontend inside the VM (no Docker), then pre-warm
+    Chromium so the first `shot` / agent screenshot isn't a slow cold launch."""
     _print_exec(vm_exec("bash /opt/app-up.sh", timeout=120))
+    print("[warm] pre-launching chromium (one-time cold start)...")
+    warm = (
+        "timeout 100 node -e \"const{chromium}=require('playwright');"
+        "(async()=>{const b=await chromium.launch({args:['--no-sandbox']});await b.close();"
+        "console.log('warm')})().catch(e=>console.log('warm-skip',e.message))\" 2>&1"
+    )
+    _print_exec(vm_exec(warm, timeout=110))
 
 
 def cmd_shot(args):
