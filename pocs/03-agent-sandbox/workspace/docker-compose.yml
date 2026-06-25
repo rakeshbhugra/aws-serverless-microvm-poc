@@ -1,0 +1,26 @@
+# The app, defined as a compose stack. Claude MAY use this (if Docker is present)
+# or just run the three processes directly — its choice.
+#
+# Note for the MicroVM environment: nested-container DNS only works via the
+# 127.0.0.2 stub and requires host networking (see the repo's POC 02 findings),
+# so services use network_mode: host and talk over localhost.
+services:
+  redis:
+    image: redis:7-alpine
+    network_mode: host
+
+  backend:
+    build: ./backend
+    network_mode: host
+    environment:
+      REDIS_HOST: 127.0.0.1
+    depends_on:
+      - redis
+
+  frontend:
+    image: python:3.12-slim
+    network_mode: host
+    working_dir: /site
+    volumes:
+      - ./frontend:/site
+    command: python -m http.server 3000
