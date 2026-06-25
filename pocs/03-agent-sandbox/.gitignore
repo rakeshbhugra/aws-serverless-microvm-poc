@@ -1,0 +1,7 @@
+.state.json
+*.zip
+.claude-token
+*.png
+claude.log
+workspace/node_modules/
+workspace/screenshots/
