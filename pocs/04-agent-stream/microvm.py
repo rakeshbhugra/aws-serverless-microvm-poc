@@ -154,17 +154,31 @@ def cmd_build(_):
             raise
     if resp.get("imageArn"):
         state_save(image_arn=resp["imageArn"])
-    print("    poll: uv run python microvm.py wait-image")
+    state_save(image_version=resp.get("imageVersion"))  # track THIS build's version
+    print(f"    building version {resp.get('imageVersion')}; poll: uv run python microvm.py wait-image")
 
 
 def cmd_wait_image(_):
+    """Poll the specific version we just built (not image-level state, which can
+    show a stale UPDATED from a prior successful version while a new one fails)."""
+    want = state_load().get("image_version")
     while True:
-        st = mv().get_microvm_image(imageIdentifier=image_arn()).get("state")
-        print(f"    image state: {st}")
-        if st in ("CREATED", "UPDATED"):
-            return
-        if st and "FAILED" in st:
-            sys.exit(f"build failed — CloudWatch /aws/lambda/microvms/{IMAGE_NAME}")
+        vers = {v.get("imageVersion"): v for v in
+                mv().list_microvm_image_versions(imageIdentifier=image_arn()).get("items", [])}
+        if want and want in vers:
+            st = vers[want].get("state")
+            print(f"    version {want} state: {st}")
+            if st == "SUCCESSFUL":
+                return
+            if st == "FAILED":
+                sys.exit(f"version {want} build FAILED — CloudWatch /aws/lambda/microvms/{IMAGE_NAME}")
+        else:
+            st = mv().get_microvm_image(imageIdentifier=image_arn()).get("state")
+            print(f"    image state: {st}")
+            if st in ("CREATED", "UPDATED"):
+                return
+            if st and "FAILED" in st:
+                sys.exit(f"build failed — CloudWatch /aws/lambda/microvms/{IMAGE_NAME}")
         time.sleep(10)
 
 
@@ -195,19 +209,21 @@ def cmd_token(_):
 
 
 # ---- the streaming bits -----------------------------------------------------
-def _post_run(body: dict):
+def _post_run(body: dict) -> str:
     endpoint = need("endpoint")
     req = urllib.request.Request(f"https://{endpoint}/run", data=json.dumps(body).encode(),
                                  headers={**_hdr("9100"), "Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=30) as r:
-        print("  run:", r.read().decode())
+        resp = json.loads(r.read())
+    print(f"  run #{resp['run']} ({resp['stream']})")
+    return str(resp["run"])
 
 
-def _consume_stream(from_id: str = "0"):
-    """Open the SSE stream and print events live until 'done'."""
+def _consume_stream(run: str, from_id: str = "0"):
+    """Open the SSE stream for one run and print events live until 'done'."""
     endpoint = need("endpoint")
-    req = urllib.request.Request(f"https://{endpoint}/stream?from={from_id}", headers=_hdr("9100"))
-    print(f"  --- streaming (https://{endpoint}/stream) ---")
+    req = urllib.request.Request(f"https://{endpoint}/stream?run={run}&from={from_id}", headers=_hdr("9100"))
+    print(f"  --- streaming run #{run} ---")
     with urllib.request.urlopen(req, timeout=300) as r:
         for raw in r:
             line = raw.decode(errors="replace").rstrip("\n")
@@ -230,8 +246,8 @@ def _consume_stream(from_id: str = "0"):
 
 def cmd_demo_stream(_):
     """Prove the transport with a canned producer — no Claude token needed."""
-    _post_run({"demo": True})
-    _consume_stream()
+    run = _post_run({"demo": True})
+    _consume_stream(run)
 
 
 def cmd_agent_stream(args):
@@ -240,8 +256,8 @@ def cmd_agent_stream(args):
     if not tok:
         sys.exit("no Claude token — put it in .claude-token or export CLAUDE_CODE_OAUTH_TOKEN")
     task = " ".join(args.rest) if args and args.rest else DEFAULT_TASK
-    _post_run({"task": task, "token": tok})
-    _consume_stream()
+    run = _post_run({"task": task, "token": tok})
+    _consume_stream(run)
 
 
 def cmd_shell(args):
