@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Drive the secrets-token MicroVM (roadmap track 5 — credential from Secrets Manager).
+"""Drive the secrets-token MicroVM (roadmap track 5 — credential from Secrets Manager)
+with the external-ElastiCache networking carried over from POC 4.
 
-A light Debian image (Node + Python + Redis + Claude CLI) running an
-agent-server on :9100 that runs `claude -p --output-format stream-json`, buffers
-each event into a Redis Stream, and relays it over SSE.
+A light Debian image (Node + Python + Claude CLI) running an agent-server on :9100
+that runs `claude -p --output-format stream-json`, buffers each event into an external
+ElastiCache (Valkey) Redis Stream over a VPC egress connector, and relays it over SSE.
 
-    uv run python microvm.py check / prereqs / package / build / wait-image
-    uv run python microvm.py run / wait / token
-    uv run python microvm.py demo-stream          # stream a canned producer (NO secret) — proves transport
-    uv run python microvm.py agent-stream "task"  # run Claude, stream its events live
-    uv run python microvm.py shell "..." / logs / suspend / resume / terminate / clean
+    uv run python microvm.py check / prereqs / net-setup / add-nat
+    uv run python microvm.py package / build / wait-image / run / wait / token / probe
+    uv run python microvm.py demo-stream          # canned producer (no credential)
+    uv run python microvm.py agent-stream "task"  # run Claude, stream live
+    uv run python microvm.py shell / logs / clean / net-clean
 
-Unlike POC 4, the Claude credential is NOT read locally or sent in the request.
-The VM assumes a runtime role (executionRoleArn) and fetches it from Secrets
-Manager itself — the operator never handles the credential.
+The Claude credential is NOT handled by the operator: the VM assumes a runtime role
+(executionRoleArn) and fetches it from Secrets Manager itself. The Redis buffer is an
+external ElastiCache cluster reached over a VPC egress connector (+ NAT for the Claude
+API / Secrets Manager). See README for the combined runbook.
 """
 
 import argparse
@@ -40,6 +42,18 @@ RUNTIME_ROLE_NAME = os.environ.get("RUNTIME_ROLE_NAME", "QhiveMicrovmRuntimeRole
 SECRET_NAME = os.environ.get("SECRET_NAME", "microvm/claude-api-key")
 ZIP_KEY = "secrets-token.zip"
 MEMORY_MIB = int(os.environ.get("MEMORY_MIB", "2048"))
+
+# External Redis (ElastiCache) instead of an in-VM redis-server. The VM reaches it
+# over a customer VPC egress connector; the endpoint is baked into the image (it is
+# not a secret) by `package` and read by agent-server.py.
+CACHE_CLUSTER_ID = os.environ.get("CACHE_CLUSTER_ID", "ryu-agent-cache")
+CACHE_NODE_TYPE = os.environ.get("CACHE_NODE_TYPE", "cache.t4g.micro")  # smallest node (~$0.016/hr)
+CACHE_SUBNET_GROUP = os.environ.get("CACHE_SUBNET_GROUP", "ryu-agent-cache-subnets")
+VM_SG_NAME = os.environ.get("VM_SG_NAME", "ryu-microvm-egress")
+CACHE_SG_NAME = os.environ.get("CACHE_SG_NAME", "ryu-cache-ingress")
+CONNECTOR_NAME = os.environ.get("CONNECTOR_NAME", "ryu-vpc-egress")
+CONNECTOR_ROLE_NAME = os.environ.get("CONNECTOR_ROLE_NAME", "MicrovmConnectorOperatorRole")
+REDIS_HOST_FILE = IMAGE_DIR / "redis_host"  # baked into the image; gitignored
 
 BASE_IMAGE_ARN = f"arn:aws:lambda:{REGION}:aws:microvm-image:al2023-1"
 INGRESS = f"arn:aws:lambda:{REGION}:aws:network-connector:aws-network-connector:ALL_INGRESS"
@@ -69,6 +83,18 @@ def need(key: str):
 
 def mv():
     return boto3.client("lambda-microvms", region_name=REGION)
+
+
+def ec2():
+    return boto3.client("ec2", region_name=REGION)
+
+
+def ecache():
+    return boto3.client("elasticache", region_name=REGION)
+
+
+def core():
+    return boto3.client("lambda-core", region_name=REGION)
 
 
 def account_id() -> str:
@@ -137,9 +163,234 @@ def cmd_prereqs(_):
     time.sleep(10)
 
 
+# ---- external Redis (ElastiCache) over a VPC egress connector ----------------
+CONNECTOR_TRUST = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow",
+                   "Principal": {"Service": "network-connectors.lambda.amazonaws.com"},
+                   "Action": "sts:AssumeRole"}]}
+
+CONNECTOR_PERMS = {"Version": "2012-10-17", "Statement": [
+    {"Sid": "ManageENI", "Effect": "Allow",
+     "Action": ["ec2:CreateNetworkInterface", "ec2:DeleteNetworkInterface", "ec2:DescribeNetworkInterfaces"],
+     "Resource": ["arn:aws:ec2:*:*:network-interface/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:security-group/*"]},
+    {"Sid": "TagENI", "Effect": "Allow", "Action": "ec2:CreateTags",
+     "Resource": "arn:aws:ec2:*:*:network-interface/*",
+     "Condition": {"StringEquals": {"ec2:ManagedResourceOperator": "network-connectors.lambda.amazonaws.com"}}}]}
+
+
+# MicroVMs aren't offered in every AZ (e.g. use1-az3); exclude unsupported ones so
+# the connector's ENIs land only where a MicroVM can attach.
+EXCLUDE_AZ_IDS = set(filter(None, os.environ.get("EXCLUDE_AZ_IDS", "use1-az3").split(",")))
+
+
+def _default_vpc_subnets() -> tuple[str, list[dict]]:
+    vpcs = ec2().describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"]
+    if not vpcs:
+        sys.exit("no default VPC — set VPC_ID/subnets via a dedicated VPC instead")
+    vpc = vpcs[0]["VpcId"]
+    subnets = [{"id": s["SubnetId"], "az": s.get("AvailabilityZoneId")}
+               for s in ec2().describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc]}])["Subnets"]
+               if s.get("AvailabilityZoneId") not in EXCLUDE_AZ_IDS]
+    if not subnets:
+        sys.exit("no usable subnets after AZ filter")
+    return vpc, subnets
+
+
+def _create_connector(op_role: str, subnets: list[dict], vm_sg: str) -> tuple[str, list[str]]:
+    """Create the VPC egress connector, dropping any AZ the MicroVM compute type
+    rejects (the supported-AZ set isn't published, so we discover it from the error)."""
+    pool = list(subnets)
+    while pool:
+        ids = [s["id"] for s in pool]
+        print(f"    trying connector in AZs {[s['az'] for s in pool]}")
+        try:
+            arn = core().create_network_connector(
+                Name=CONNECTOR_NAME, OperatorRole=op_role,
+                Configuration={"VpcEgressConfiguration": {
+                    "SubnetIds": ids, "SecurityGroupIds": [vm_sg],
+                    "NetworkProtocol": "IPv4", "AssociatedComputeResourceTypes": ["MicroVm"]}})["Arn"]
+            return arn, ids
+        except ClientError as e:
+            msg = str(e)
+            bad = next((s for s in pool if s["az"] and s["az"] in msg), None)
+            if "not available for compute type" in msg and bad:
+                print(f"    dropping unsupported AZ {bad['az']}")
+                pool.remove(bad)
+                continue
+            raise
+    sys.exit("no MicroVM-supported AZ among the VPC subnets")
+
+
+def _ensure_sg(name: str, vpc: str, desc: str) -> str:
+    found = ec2().describe_security_groups(Filters=[
+        {"Name": "group-name", "Values": [name]}, {"Name": "vpc-id", "Values": [vpc]}])["SecurityGroups"]
+    if found:
+        return found[0]["GroupId"]
+    return ec2().create_security_group(GroupName=name, Description=desc, VpcId=vpc)["GroupId"]
+
+
+def cmd_net_setup(_):
+    """Create the VPC egress path + ElastiCache: security groups, connector operator
+    role, the lambda-core network connector, and a Redis node cluster. Idempotent-ish."""
+    iam = boto3.client("iam")
+    vpc, subnet_info = _default_vpc_subnets()
+    print(f"==> default VPC {vpc} with {len(subnet_info)} candidate subnets "
+          f"(AZs {[s['az'] for s in subnet_info]})")
+
+    # Security groups: VM egress SG (source) + cache SG (allows 6379 from VM SG).
+    vm_sg = _ensure_sg(VM_SG_NAME, vpc, "MicroVM VPC egress")
+    cache_sg = _ensure_sg(CACHE_SG_NAME, vpc, "ElastiCache ingress from MicroVMs")
+    try:
+        ec2().authorize_security_group_ingress(GroupId=cache_sg, IpPermissions=[{
+            "IpProtocol": "tcp", "FromPort": 6379, "ToPort": 6379,
+            "UserIdGroupPairs": [{"GroupId": vm_sg, "Description": "redis from microvm egress"}]}])
+    except ClientError as e:
+        if "Duplicate" not in str(e):
+            raise
+    print(f"    sg vm={vm_sg} cache={cache_sg} (6379 cache<-vm)")
+
+    # Connector operator role (lets Lambda create ENIs in the VPC).
+    try:
+        iam.get_role(RoleName=CONNECTOR_ROLE_NAME)
+    except ClientError:
+        iam.create_role(RoleName=CONNECTOR_ROLE_NAME, AssumeRolePolicyDocument=json.dumps(CONNECTOR_TRUST))
+    iam.put_role_policy(RoleName=CONNECTOR_ROLE_NAME, PolicyName="manage-eni",
+                        PolicyDocument=json.dumps(CONNECTOR_PERMS))
+    op_role = f"arn:aws:iam::{account_id()}:role/{CONNECTOR_ROLE_NAME}"
+    print(f"    connector operator role {op_role}; sleeping 10s for IAM"); time.sleep(10)
+
+    # Network connector (VPC egress). Reused across runs; wait until ACTIVE.
+    # usable_subnets = the AZ-filtered set the connector actually accepted.
+    existing = {c["Name"]: c for c in core().list_network_connectors().get("NetworkConnectors", [])}
+    if CONNECTOR_NAME in existing:
+        conn_arn = existing[CONNECTOR_NAME]["Arn"]
+        usable_subnets = [s["id"] for s in subnet_info]
+    else:
+        conn_arn, usable_subnets = _create_connector(op_role, subnet_info, vm_sg)
+    while True:
+        st = core().get_network_connector(Identifier=conn_arn).get("State")
+        print(f"    connector state: {st}")
+        if st == "ACTIVE":
+            break
+        if st in ("FAILED", "DELETE_FAILED"):
+            sys.exit(f"connector {st}")
+        time.sleep(10)
+
+    # ElastiCache: subnet group + single-node Valkey cluster, SG-gated (no TLS/auth for POC).
+    # Same AZ subset the connector accepted, so the VM and cache share AZs.
+    try:
+        ecache().create_cache_subnet_group(CacheSubnetGroupName=CACHE_SUBNET_GROUP,
+                                            CacheSubnetGroupDescription="ryu microvm cache", SubnetIds=usable_subnets)
+    except ClientError as e:
+        if "already exists" not in str(e).lower():
+            raise
+    # Valkey requires CreateReplicationGroup (not CreateCacheCluster). Single node,
+    # cluster-mode disabled, no replica, no TLS/auth — SG-gated for the POC.
+    try:
+        ecache().create_replication_group(
+            ReplicationGroupId=CACHE_CLUSTER_ID, ReplicationGroupDescription="ryu microvm valkey",
+            Engine="valkey", CacheNodeType=CACHE_NODE_TYPE, NumCacheClusters=1,
+            CacheSubnetGroupName=CACHE_SUBNET_GROUP, SecurityGroupIds=[cache_sg],
+            TransitEncryptionEnabled=False)  # POC: SG-gated, plaintext client
+        print(f"    creating valkey replication group {CACHE_CLUSTER_ID} ({CACHE_NODE_TYPE})")
+    except ClientError as e:
+        if "already exists" not in str(e).lower():
+            raise
+    while True:
+        rg = ecache().describe_replication_groups(ReplicationGroupId=CACHE_CLUSTER_ID)["ReplicationGroups"][0]
+        st = rg["Status"]
+        print(f"    cache state: {st}")
+        if st == "available":
+            host = rg["NodeGroups"][0]["PrimaryEndpoint"]["Address"]
+            break
+        time.sleep(15)
+    state_save(connector_arn=conn_arn, vm_sg=vm_sg, cache_sg=cache_sg, redis_host=host,
+               vpc=vpc, subnets=usable_subnets)
+    print(f"==> ready. connector={conn_arn}\n    redis_host={host}")
+
+
+def cmd_add_nat(_):
+    """Give the VPC egress path internet access (for the Claude API). MicroVM ENIs get
+    no public IP, so a VPC connector alone has no internet — add a NAT gateway and move
+    the connector's ENIs into private subnets routed through it. ElastiCache stays put
+    (reached over the VPC's local route)."""
+    s = state_load()
+    vpc = need("vpc")
+    all_subnets = ec2().describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc]}])["Subnets"]
+    # NAT goes in a public (default) subnet — one NOT used by the connector, so it keeps
+    # its IGW route. Prefer an excluded-AZ default subnet.
+    used = set(s.get("subnets", []))
+    pub = next((x for x in all_subnets if x.get("DefaultForAz") and x["SubnetId"] not in used), all_subnets[0])
+    print(f"==> NAT in public subnet {pub['SubnetId']} ({pub['AvailabilityZoneId']})")
+
+    if not s.get("nat_gw"):
+        eip = ec2().allocate_address(Domain="vpc")["AllocationId"]
+        nat = ec2().create_nat_gateway(SubnetId=pub["SubnetId"], AllocationId=eip)["NatGateway"]["NatGatewayId"]
+        print(f"    NAT {nat} (eip {eip}); waiting available")
+        ec2().get_waiter("nat_gateway_available").wait(NatGatewayIds=[nat])
+        s = state_save(nat_gw=nat, eip_alloc=eip)
+    nat = s["nat_gw"]
+
+    # Private subnets in the connector's AZs, routed 0.0.0.0/0 -> NAT.
+    conn_azs = {x["AvailabilityZoneId"]: x["AvailabilityZone"]
+                for x in all_subnets if x["SubnetId"] in used}
+    if not s.get("private_subnets"):
+        rt = ec2().create_route_table(VpcId=vpc)["RouteTable"]["RouteTableId"]
+        ec2().create_route(RouteTableId=rt, DestinationCidrBlock="0.0.0.0/0", NatGatewayId=nat)
+        priv = []
+        for i, az in enumerate(sorted(conn_azs.values())):
+            sn = ec2().create_subnet(VpcId=vpc, CidrBlock=f"172.31.{96 + i}.0/24",
+                                     AvailabilityZone=az)["Subnet"]["SubnetId"]
+            ec2().associate_route_table(RouteTableId=rt, SubnetId=sn)
+            priv.append(sn)
+        s = state_save(private_rt=rt, private_subnets=priv)
+        print(f"    private subnets {priv} -> NAT")
+    priv = s["private_subnets"]
+
+    # Repoint the connector at the private subnets (in place). Terminate any VM first.
+    if s.get("microvm_id"):
+        try:
+            mv().terminate_microvm(microvmIdentifier=s["microvm_id"]); print("    terminated old VM")
+        except ClientError:
+            pass
+    # Repoint at the private subnets, dropping any AZ MicroVM rejects (e.g. az5).
+    az_of = {x["SubnetId"]: x["AvailabilityZoneId"]
+             for x in ec2().describe_subnets(SubnetIds=priv)["Subnets"]}
+    pool = list(priv)
+    while pool:
+        try:
+            core().update_network_connector(Identifier=need("connector_arn"),
+                Configuration={"VpcEgressConfiguration": {
+                    "SubnetIds": pool, "SecurityGroupIds": [need("vm_sg")],
+                    "NetworkProtocol": "IPv4", "AssociatedComputeResourceTypes": ["MicroVm"]}})
+            break
+        except ClientError as e:
+            bad = next((sn for sn in pool if az_of.get(sn) and az_of[sn] in str(e)), None)
+            if "not available for compute type" in str(e) and bad:
+                print(f"    dropping connector subnet in {az_of[bad]}")
+                pool.remove(bad)
+                continue
+            raise
+    # Subnet migration is async: State stays ACTIVE while LastUpdateStatus cycles
+    # InProgress -> Successful. Wait for the migration to actually finish.
+    while True:
+        c = core().get_network_connector(Identifier=need("connector_arn"))
+        st, us = c.get("State"), c.get("LastUpdateStatus")
+        print(f"    connector state={st} update={us}")
+        if st == "ACTIVE" and us in (None, "Successful"):
+            break
+        if "FAIL" in ((us or "") + (st or "")).upper():
+            sys.exit(f"connector update {us or st}: {c.get('LastUpdateStatusReason')}")
+        time.sleep(10)
+    print("==> NAT wired; connector now egresses via NAT. Re-run + probe.")
+
+
 def cmd_package(_):
     import zipfile
     b = state_load().get("bucket") or bucket_name()
+    host = state_load().get("redis_host")
+    if not host:
+        sys.exit("no redis_host in state — run 'net-setup' first")
+    REDIS_HOST_FILE.write_text(host + "\n")  # baked into the image (non-secret)
     zp = HERE / ZIP_KEY
     with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(IMAGE_DIR.iterdir()):
@@ -197,13 +448,35 @@ def cmd_wait_image(_):
 
 
 def cmd_run(_):
-    # executionRoleArn gives the running VM AWS credentials so it can fetch the
-    # Claude credential from Secrets Manager itself — the POC-5 change.
+    # VPC-only egress: the platform rejects INTERNET_EGRESS + a VPC connector together,
+    # so all egress goes through the VPC connector. The VPC must therefore provide
+    # internet (Claude API) via a NAT gateway — see 'add-nat'. ElastiCache is reached
+    # privately within the VPC.
+    # executionRoleArn (POC 5): VM assumes the runtime role to fetch the secret.
+    # VPC egress connector (POC 4): reaches ElastiCache; Secrets Manager + Claude API
+    # also egress through the VPC, so this needs the NAT from `add-nat`.
+    egress = [need("connector_arn")]
     resp = mv().run_microvm(imageIdentifier=image_arn(), ingressNetworkConnectors=[INGRESS],
-                            egressNetworkConnectors=[EGRESS], idlePolicy=IDLE_POLICY,
+                            egressNetworkConnectors=egress, idlePolicy=IDLE_POLICY,
                             executionRoleArn=need("runtime_role_arn"))
     state_save(microvm_id=resp["microvmId"], endpoint=resp["endpoint"])
-    print(f"==> microvm {resp['microvmId']}\n    https://{resp['endpoint']}")
+    print(f"==> microvm {resp['microvmId']} (VPC egress + runtime role)\n    https://{resp['endpoint']}")
+
+
+def cmd_probe(_):
+    """From inside the VM (:9000 shell), check reachability of ElastiCache (6379)
+    and the public internet (Claude API) — decides whether a NAT gateway is needed."""
+    host = need("redis_host")
+    print("  --- ElastiCache reachability (expect PONG) ---")
+    cmd_shell(_mk(f"/opt/venv/bin/python -c \"import socket,sys; s=socket.create_connection(('{host}',6379),5); "
+                  f"s.sendall(b'PING\\r\\n'); print(s.recv(64))\""))
+    print("  --- internet/Claude API reachability (expect HTTP 200/401) ---")
+    cmd_shell(_mk("curl -sS -o /dev/null -w 'api.anthropic.com -> %{http_code}\\n' --max-time 8 https://api.anthropic.com/v1/messages -X POST || echo 'NO INTERNET'"))
+
+
+def _mk(cmd: str):
+    import argparse as _a
+    ns = _a.Namespace(); ns.rest = [cmd]; return ns
 
 
 def cmd_wait(_):
@@ -270,8 +543,8 @@ def cmd_demo_stream(_):
 def cmd_agent_stream(args):
     """Run Claude on a task inside the VM and stream its events live.
 
-    No credential is handled here — the VM fetches it from Secrets Manager via
-    its runtime role. We only send the task.
+    No credential is handled here — the VM fetches it from Secrets Manager via its
+    runtime role. We only send the task.
     """
     task = " ".join(args.rest) if args and args.rest else DEFAULT_TASK
     run = _post_run({"task": task})
@@ -307,6 +580,8 @@ def _simple(method, label):
 
 
 def cmd_clean(_):
+    """Tear down the VM + image only (cheap, frequent). Leaves the connector/cache
+    so you don't re-wait ~15min for ElastiCache. Use 'net-clean' for that infra."""
     s = state_load()
     if s.get("microvm_id"):
         try:
@@ -319,16 +594,84 @@ def cmd_clean(_):
         print("    image deleted")
     except ClientError as e:
         print(f"    (image delete skipped: {e})")
+    for k in ("microvm_id", "endpoint", "image_arn", "image_version", "token"):
+        s.pop(k, None)
+    STATE_FILE.write_text(json.dumps(s, indent=2))
+    print("==> cleaned (connector/cache kept — run net-clean to remove)")
+
+
+def cmd_net_clean(_):
+    """Tear down the billable infra: ElastiCache cluster, connector, SGs, operator role."""
+    s = state_load()
+    try:
+        ecache().delete_replication_group(ReplicationGroupId=CACHE_CLUSTER_ID)
+        print("    cache deleting (wait for it before SG delete)")
+        ecache().get_waiter("replication_group_deleted").wait(ReplicationGroupId=CACHE_CLUSTER_ID)
+    except ClientError as e:
+        print(f"    (cache delete skipped: {e})")
+    try:
+        ecache().delete_cache_subnet_group(CacheSubnetGroupName=CACHE_SUBNET_GROUP)
+    except ClientError as e:
+        print(f"    (subnet group skipped: {e})")
+    if s.get("connector_arn"):
+        try:
+            core().delete_network_connector(Identifier=s["connector_arn"])
+            print("    connector deleting")
+            while True:
+                try:
+                    core().get_network_connector(Identifier=s["connector_arn"])
+                    time.sleep(10)
+                except ClientError:
+                    break
+        except ClientError as e:
+            print(f"    (connector delete skipped: {e})")
+    # NAT teardown (stops the hourly NAT charge): NAT gw, EIP, private subnets, route table.
+    if s.get("nat_gw"):
+        try:
+            ec2().delete_nat_gateway(NatGatewayId=s["nat_gw"])
+            print("    NAT deleting; waiting")
+            ec2().get_waiter("nat_gateway_deleted").wait(NatGatewayIds=[s["nat_gw"]])
+        except ClientError as e:
+            print(f"    (NAT delete skipped: {e})")
+    if s.get("eip_alloc"):
+        try:
+            ec2().release_address(AllocationId=s["eip_alloc"])
+        except ClientError as e:
+            print(f"    (EIP release skipped: {e})")
+    for sn in s.get("private_subnets", []):
+        try:
+            ec2().delete_subnet(SubnetId=sn)
+        except ClientError as e:
+            print(f"    (subnet {sn} skipped: {e})")
+    if s.get("private_rt"):
+        try:
+            ec2().delete_route_table(RouteTableId=s["private_rt"])
+        except ClientError as e:
+            print(f"    (route table skipped: {e})")
+    for sg in (s.get("cache_sg"), s.get("vm_sg")):
+        if sg:
+            try:
+                ec2().delete_security_group(GroupId=sg)
+            except ClientError as e:
+                print(f"    (sg {sg} skipped: {e})")
+    iam = boto3.client("iam")
+    try:
+        iam.delete_role_policy(RoleName=CONNECTOR_ROLE_NAME, PolicyName="manage-eni")
+        iam.delete_role(RoleName=CONNECTOR_ROLE_NAME)
+    except ClientError as e:
+        print(f"    (operator role skipped: {e})")
+    REDIS_HOST_FILE.unlink(missing_ok=True)
     STATE_FILE.unlink(missing_ok=True)
-    print("==> cleaned")
+    print("==> net-clean done")
 
 
 COMMANDS = {
-    "check": cmd_check, "prereqs": cmd_prereqs, "package": cmd_package, "build": cmd_build,
-    "wait-image": cmd_wait_image, "run": cmd_run, "wait": cmd_wait, "token": cmd_token,
+    "check": cmd_check, "prereqs": cmd_prereqs, "net-setup": cmd_net_setup, "add-nat": cmd_add_nat,
+    "package": cmd_package, "build": cmd_build,
+    "wait-image": cmd_wait_image, "run": cmd_run, "wait": cmd_wait, "token": cmd_token, "probe": cmd_probe,
     "demo-stream": cmd_demo_stream, "agent-stream": cmd_agent_stream, "shell": cmd_shell, "logs": cmd_logs,
     "suspend": _simple("suspend_microvm", "suspended"), "resume": _simple("resume_microvm", "resumed"),
-    "terminate": _simple("terminate_microvm", "terminated"), "clean": cmd_clean,
+    "terminate": _simple("terminate_microvm", "terminated"), "clean": cmd_clean, "net-clean": cmd_net_clean,
 }
 
 

@@ -22,9 +22,22 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import pathlib
+
 import redis
 
-R = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+# External Redis (ElastiCache) reached over the VPC egress connector. The endpoint
+# is baked into the image at /redis_host (non-secret); fall back to localhost only
+# if absent. SG-gated, no TLS/auth for this POC.
+def _redis_host() -> str:
+    env = os.environ.get("REDIS_HOST")
+    if env:
+        return env.strip()
+    f = pathlib.Path("/redis_host")
+    return f.read_text().strip() if f.exists() else "127.0.0.1"
+
+
+R = redis.Redis(host=_redis_host(), port=6379, decode_responses=True, socket_connect_timeout=10)
 
 
 def emit(stream: str, obj: dict):

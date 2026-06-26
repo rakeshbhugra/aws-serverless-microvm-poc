@@ -60,19 +60,25 @@ These are provisioned **outside** this driver (the driver only reads them):
 
 ## Run it
 
+The driver now integrates POC 4's external-ElastiCache networking (no in-VM
+`redis-server`), so the runbook includes the network/cache steps:
+
 ```
 eval "$(aws configure export-credentials --format env)"   # boto3/SSO workaround on this box
-uv run python microvm.py check / prereqs / package / build / wait-image
-uv run python microvm.py run / wait / token
-
-# prove the transport — canned producer, no credential needed:
-uv run python microvm.py demo-stream
-
-# the real thing — Claude streaming, credential fetched inside the VM:
-uv run python microvm.py agent-stream "Add a farewell(name) function to hello.py and run it."
+uv run python microvm.py check                 # secret reachable? runtime role?
+uv run python microvm.py prereqs               # bucket + build role + resolve runtime role
+uv run python microvm.py net-setup             # SGs, connector, Valkey node, saves redis_host
+uv run python microvm.py add-nat               # NAT + private subnets (needed: see below)
+uv run python microvm.py package / build / wait-image   # bakes redis_host into the image
+uv run python microvm.py run / wait / token    # run attaches BOTH executionRoleArn + VPC connector
+uv run python microvm.py probe                 # in-VM: STS identity, Secrets Manager, ElastiCache, Claude API
+uv run python microvm.py demo-stream                              # transport via ElastiCache
+uv run python microvm.py agent-stream "Add a farewell(name) ..."  # real Claude, VM fetches the secret
+uv run python microvm.py clean / net-clean     # teardown (net-clean stops the ~$48/mo)
 ```
 
-No `.claude-token` file. No credential in any local file or request body.
+No `.claude-token` file. No credential in any local file or request body. The Redis
+buffer is external ElastiCache, reached over the VPC egress connector.
 
 ## Verify the VM can authenticate (the key new capability)
 
@@ -116,3 +122,49 @@ uv run python microvm.py clean
   (env default); only the *value* is protected.
 - On this machine, runs need the Zscaler CA bundle + `UV_PYTHON_DOWNLOADS=never`
   workaround (SSL interception); unrelated to the POC.
+
+---
+
+## Carry-over: external ElastiCache over a VPC egress connector
+
+POC 5 **now composes** the networking work from **POC 4** (external ElastiCache instead
+of in-VM Redis) — the driver and image carry the `net-setup` / `add-nat` / `probe` /
+`net-clean` commands, drop the local `redis-server`, and point `agent-server.py` at the
+baked ElastiCache endpoint. The full runbook, the egress-combination test matrix, and the
+resource/cost breakdown live in **`pocs/04-agent-stream/README.md` → "External Redis —
+ElastiCache over a VPC egress connector"** — read it for the gotchas. What's wired in
+here: a `lambda-core` **VPC egress connector** (subnets + SG + operator role), a **Valkey**
+node via `CreateReplicationGroup` (`NumCacheClusters=1`, `TransitEncryptionEnabled=False`
+for the POC), and a **NAT gateway** because the VPC connector replaces the VM's default
+internet path.
+
+> **Not yet live-verified.** These are code-only changes mirrored from POC 4 (proven
+> there); the combined POC 5 path — runtime role + VPC egress + Secrets-Manager-via-NAT —
+> hasn't been run end-to-end yet (infra was torn down to stop billing). Provision with the
+> runbook above and use `probe` to verify before trusting it.
+
+### ⚠️ POC 5 + VPC egress: Secrets Manager also goes through the VPC
+
+This is the combine-point that bites: POC 5's whole model is the VM calling
+`secretsmanager:GetSecretValue` itself. Today that works because the VM has **default
+internet egress** and reaches the public Secrets Manager endpoint. **The moment you add a
+VPC egress connector (for ElastiCache), egress becomes VPC-only** — and Secrets Manager,
+STS, etc. are reached over the *public internet* too, so those calls now need either:
+
+- a **NAT gateway** (what POC 4 uses — covers Secrets Manager *and* the Claude API), **or**
+- a **Secrets Manager VPC interface endpoint** (PrivateLink) — keeps the secret fetch
+  fully private, no NAT needed *for that call*; but the Claude API (`api.anthropic.com`,
+  not an AWS service) still needs NAT. So with VPC egress you almost always still need NAT
+  for Claude; a PrivateLink endpoint is only worth it to keep the secret traffic off NAT.
+
+What does **not** break: the **executionRole credential delivery** (the IMDS-style
+metadata endpoint) is link-local and works regardless of egress — so the VM keeps its
+identity; it's only the outbound *API calls* to AWS services that route through the VPC.
+
+### Combined runbook sketch (POC 5 ⊕ POC 4 networking)
+
+`prereqs` → `net-setup` (connector + Valkey) → `add-nat` → `package`/`build`/`run` with
+**both** `executionRoleArn` (POC 5, for the secret) **and** the VPC egress connector
+(POC 4, for the cache). Verify in this order: (a) `sts get-caller-identity` in-VM
+(identity), (b) `secretsmanager get-secret-value` in-VM (needs NAT or PrivateLink),
+(c) ElastiCache `PING` (VPC local route), (d) `curl api.anthropic.com` (needs NAT).

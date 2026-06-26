@@ -1,12 +1,13 @@
-# MicroVM image for POC 5 — agent streaming with the Claude credential fetched
-# from Secrets Manager inside the VM. Lighter than POC 3 (no Playwright/Chromium):
-# just Node (Claude CLI), Python, and Redis (the stream buffer).
+# MicroVM image for POC 5 — agent streaming with the Claude credential fetched from
+# Secrets Manager inside the VM, and the Redis stream buffer on external ElastiCache
+# (reached over a VPC egress connector). No local redis-server. Just Node (Claude CLI),
+# Python, the redis client, and boto3.
 FROM node:22-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3-venv redis-server ca-certificates curl
+      python3 python3-venv ca-certificates curl
 
-# Python venv with redis (stream buffer) + boto3 (Secrets Manager fetch in agent-server.py).
+# Python venv with redis client (talks to ElastiCache) + boto3 (Secrets Manager fetch).
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir redis boto3
 
 # Claude Code CLI.
@@ -19,6 +20,7 @@ COPY workspace/ /workspace/
 RUN chown -R node:node /workspace
 COPY agent-server.py /agent-server.py
 COPY debug-exec.py /debug-exec.py
+COPY redis_host /redis_host
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

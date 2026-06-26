@@ -2,3 +2,5 @@
 *.zip
 .claude-token
 claude.log
+image/redis_host
+__pycache__/

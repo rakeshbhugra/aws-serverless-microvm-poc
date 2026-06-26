@@ -1,11 +1,12 @@
-# MicroVM image for POC 4 — agent streaming. Lighter than POC 3 (no Playwright/
-# Chromium): just Node (Claude CLI), Python, and Redis (the stream buffer).
+# MicroVM image for POC 4 — agent streaming. The Redis stream buffer is now an
+# external ElastiCache cluster (reached over a VPC egress connector), so no local
+# redis-server is installed/run. Just Node (Claude CLI) + Python + the redis client.
 FROM node:22-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3-venv redis-server ca-certificates curl
+      python3 python3-venv ca-certificates curl
 
-# Python venv with the redis client (for agent-server.py).
+# Python venv with the redis client (for agent-server.py talking to ElastiCache).
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir redis
 
 # Claude Code CLI.
@@ -18,6 +19,7 @@ COPY workspace/ /workspace/
 RUN chown -R node:node /workspace
 COPY agent-server.py /agent-server.py
 COPY debug-exec.py /debug-exec.py
+COPY redis_host /redis_host
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
