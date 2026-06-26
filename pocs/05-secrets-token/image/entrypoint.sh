@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Start Redis (the stream buffer) + debug-exec (:9000) + agent-server (:9100).
+set -uo pipefail
+
+# Non-secret config for the in-VM Secrets Manager fetch. The secret *name* is not
+# sensitive; its value is read at runtime via the VM's executionRole credentials.
+export SECRET_NAME="${SECRET_NAME:-microvm/claude-api-key}"
+export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+
+echo "[entrypoint] redis..."
+redis-server --daemonize yes
+
+echo "[entrypoint] debug-exec :9000..."
+python3 /debug-exec.py >/var/log/debug-exec.log 2>&1 &
+
+echo "[entrypoint] agent-server :9100..."
+/opt/venv/bin/python /agent-server.py >/var/log/agent-server.log 2>&1 &
+
+echo "[entrypoint] ready"
+exec tail -f /dev/null
