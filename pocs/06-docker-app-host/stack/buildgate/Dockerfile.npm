@@ -1,0 +1,3 @@
+# Build gate (npm): a network RUN step. NPM_OK in the log == success.
+FROM node:22-slim
+RUN npm install -g cowsay && cowsay NPM_OK

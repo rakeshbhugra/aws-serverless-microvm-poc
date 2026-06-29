@@ -1,0 +1,4 @@
+# Build gate (pip): a network RUN step. If `pip install` resolves DNS during
+# `docker build` in-VM, the gate passes. PIP_OK in the log == success.
+FROM python:3.12-slim
+RUN pip install --no-cache-dir requests && python -c "import requests; print('PIP_OK', requests.__version__)"
