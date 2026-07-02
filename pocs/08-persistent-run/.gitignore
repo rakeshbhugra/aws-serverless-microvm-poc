@@ -1,0 +1,4 @@
+.state.json
+*.zip
+claude.log
+__pycache__/

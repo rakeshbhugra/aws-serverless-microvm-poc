@@ -1,0 +1,9 @@
+[project]
+name = "persistent-run-poc"
+version = "0.1.0"
+description = "A Claude/Codex run that survives across MicroVM lifecycles: deterministic session ids + S3 snapshot/restore of the run's on-disk state via lifecycle hooks"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1.43.36",
+]
